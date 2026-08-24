@@ -9,10 +9,12 @@ uninstalling any XFCE packages.
 
 ## Demo
 
-> 🎬 A short demonstration video will be added soon.
+[![Watch the XFCE Catppuccin Quickshell demo](assets/demo-preview.jpg)](https://github.com/MixGitstore/xfce-catppuccin-quickshell/blob/main/assets/demo.mp4)
 
-The recording checklist and GitHub upload instructions are in
-[docs/RECORDING.md](docs/RECORDING.md).
+▶ **[Watch the full 78-second demo](https://github.com/MixGitstore/xfce-catppuccin-quickshell/blob/main/assets/demo.mp4)**
+
+The video demonstrates the bar, launcher, file search, running applications,
+window controls, audio devices, calendar, notifications, and system resources.
 
 ## Features
 
