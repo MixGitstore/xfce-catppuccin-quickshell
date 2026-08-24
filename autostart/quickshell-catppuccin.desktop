@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Quickshell Catppuccin Bar
+Comment=Catppuccin taskbar and desktop controls for XFCE
+Exec=qs -c xfce-catppuccin
+OnlyShowIn=XFCE;
+Terminal=false
+StartupNotify=false
+X-GNOME-Autostart-enabled=true

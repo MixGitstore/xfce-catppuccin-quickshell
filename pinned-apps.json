@@ -1,0 +1,40 @@
+{
+    "pins": [
+        {
+            "key": "xfce4-terminal.desktop"
+        },
+        {
+            "key": "thunar.desktop"
+        },
+        {
+            "key": "zen.desktop"
+        },
+        {
+            "key": "net.thunderbird.Thunderbird.desktop"
+        },
+        {
+            "key": "discord.desktop"
+        },
+        {
+            "key": "steam.desktop"
+        },
+        {
+            "key": "filezilla.desktop"
+        },
+        {
+            "key": "dev.zed.Zed.desktop"
+        },
+        {
+            "key": "com.blackmagicdesign.resolve.desktop"
+        },
+        {
+            "key": "com.obsproject.Studio.desktop"
+        },
+        {
+            "key": "xfce-settings-manager.desktop"
+        },
+        {
+            "key": "xfce4-taskmanager.desktop"
+        }
+    ]
+}

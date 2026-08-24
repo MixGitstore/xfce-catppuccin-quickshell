@@ -1,0 +1,5 @@
+/watch-x11-geometry
+*.log
+*.qslog
+*~
+.DS_Store
