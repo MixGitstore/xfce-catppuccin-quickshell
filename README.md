@@ -29,6 +29,8 @@ window controls, audio devices, calendar, notifications, and system resources.
 - Fast bounded file search through the existing `plocate` database instead of
   recursively scanning the home directory.
 - Pinned applications plus automatically detected running applications.
+- Drag-and-drop reordering for pinned/running application buttons; dropping a
+  running unpinned application into the pinned area pins it in that position.
 - Active/running indicators, click-to-focus, and click-again-to-minimize.
 - A chooser for multiple windows of the same application, including a close
   button for each individual window.
@@ -37,6 +39,8 @@ window controls, audio devices, calendar, notifications, and system resources.
 - StatusNotifier system tray support, including native right-click menus for
   applications such as Steam, Discord, and qBittorrent.
 - Region screenshot, in-memory clipboard history, and Show Desktop controls.
+- Drag-and-drop reordering for the Audio, Screenshot, Clipboard, Show Desktop,
+  and Network/Notifications quick actions.
 - PipeWire output volume, microphone controls, device selection, mute, and
   MPRIS media playback controls.
 - NetworkManager popup with active connection information and Wi-Fi support
@@ -169,6 +173,9 @@ change its `command` entries in `Apps.js`.
 
 Runtime Pin/Unpin order is stored in `pinned-apps.json`.
 
+The right-side quick-action order is stored in `quick-actions.json`. Hold and
+drag an icon to move it; no QML editing is required.
+
 ### Change fonts, dimensions, or colors
 
 Edit `Theme.qml`. It contains the font families, bar height, button and icon
@@ -235,8 +242,10 @@ After confirming both Quickshell popups work:
 ```
 
 This disables the XDG autostart entries for `nm-applet` and
-`xfce4-notifyd`. NetworkManager itself stays enabled and Quickshell talks to it
-directly.
+`xfce4-notifyd`, and masks the static `xfce4-notifyd` user service so it cannot
+take the notification D-Bus name before Quickshell. NetworkManager itself stays
+enabled and Quickshell talks to it directly. The rollback script removes the
+overrides and unmasks the notification service.
 
 Rollback:
 
@@ -309,8 +318,11 @@ Do not disable or remove these services for this configuration:
 - No blur, custom shaders, or heavy shadows.
 - One clock update per minute.
 - Weather refresh limited to once per 15 minutes.
-- Audio, calendar, clipboard, system, network, and notification popups are
-  created lazily and destroyed after closing.
+- Search results and the audio, calendar, clipboard, system, network, and
+  notification popups are created lazily and destroyed after closing.
+- MPRIS players, microphones, secondary PipeWire devices, and audio streams are
+  tracked only while the audio popup is open; the default output remains live
+  for the volume icon and scroll control.
 - System resource sampling runs every two seconds only while its popup is open.
 - X11 window and snap state are event-driven instead of continuously polled.
 - File search uses the indexed `plocate` database and returns at most 12 files.
@@ -345,7 +357,11 @@ service errors.
 
 - `shell.qml` — root configuration and per-screen bar instances.
 - `UserConfig.qml` — weather and profile settings intended for users.
-- `Bar.qml` — bar behavior, launcher, popups, and controls.
+- `Bar.qml` — bar behavior, launcher, taskbar, and lazy popup loaders.
+- `*Popup.qml` — independently loaded Search, Audio, Calendar, Clipboard,
+  System, Network, and Notification interfaces.
+- `PinnedState.qml` and `QuickActionState.qml` — persistent application and
+  quick-action ordering.
 - `Apps.js` — default pinned applications and their actions.
 - `Theme.qml` — Catppuccin palette, fonts, and dimensions.
 - `assets/icons/` — bundled SVG icons.

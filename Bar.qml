@@ -1,8 +1,6 @@
 import QtQuick
 import Quickshell
 import Quickshell.Io
-import Quickshell.Networking
-import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import Quickshell.Services.SystemTray
 import Quickshell.Widgets
@@ -14,6 +12,7 @@ PanelWindow {
     required property var clockSource
     required property var windowTracker
     required property var pinnedState
+    required property var quickActionState
     required property var notificationState
     required property var configuration
     property bool pinnedOpen: false
@@ -24,6 +23,8 @@ PanelWindow {
     property bool clipboardOpen: false
     property bool networkOpen: false
     property bool notificationsOpen: false
+    property bool taskbarReordering: false
+    property var audioAnchorItem: null
     property var notificationToast: null
     property var clipboardItems: []
     property int calendarYear: (new Date()).getFullYear()
@@ -54,7 +55,6 @@ PanelWindow {
     property real systemDiskUsed: 0
     property real systemDiskTotal: 0
     property string systemHostName: "localhost"
-    property string audioDeviceChooser: ""
     property string searchQuery: ""
     property var fileResults: []
     property bool contextMenuOpen: false
@@ -76,7 +76,7 @@ PanelWindow {
         && (pinnedOpen || searchOpen || contextMenuOpen
             || audioOpen || systemOpen || calendarOpen || clipboardOpen
             || networkOpen || notificationsOpen
-            || barHover.hovered || hideDelay.running)
+            || taskbarReordering || barHover.hovered || hideDelay.running)
     readonly property var calendarMonthNames: [
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December"
@@ -98,62 +98,23 @@ PanelWindow {
     readonly property real audioVolume: audioAvailable ? audioControl.volume : 0
     readonly property bool audioMuted: audioAvailable ? audioControl.muted : true
     readonly property int audioPercent: Math.round(audioVolume * 100)
+    readonly property string audioIconSource: {
+        const base = assetIconDirectory
+        if (!audioAvailable || audioMuted || audioVolume <= 0.001) {
+            return base + "catppuccin-volume-muted.svg"
+        }
+        if (audioVolume < 0.34) {
+            return base + "catppuccin-volume-low.svg"
+        }
+        if (audioVolume < 0.67) {
+            return base + "catppuccin-volume-medium.svg"
+        }
+        return base + "catppuccin-volume-high.svg"
+    }
+
     readonly property string audioDescription: audioSink
         ? (audioSink.description || audioSink.nickname || audioSink.name || "Audio output")
         : "No audio device"
-    readonly property var pipewireNodes: Pipewire.nodes.values
-    readonly property var audioSinks: pipewireNodes.filter(function(node) {
-        return node && node.audio && node.isSink && !node.isStream
-    }).sort(function(first, second) {
-        return String(first.description || first.name).localeCompare(
-            String(second.description || second.name))
-    })
-    readonly property var audioSources: pipewireNodes.filter(function(node) {
-        return node && node.audio && !node.isSink && !node.isStream
-    }).sort(function(first, second) {
-        return String(first.description || first.name).localeCompare(
-            String(second.description || second.name))
-    })
-    readonly property var audioStreams: pipewireNodes.filter(function(node) {
-        return node && node.audio && node.isStream && node.isSink
-    })
-    readonly property var microphoneSource: Pipewire.defaultAudioSource
-    readonly property var microphoneControl:
-        microphoneSource ? microphoneSource.audio : null
-    readonly property bool microphoneAvailable: microphoneControl !== null
-    readonly property real microphoneVolume:
-        microphoneAvailable ? microphoneControl.volume : 0
-    readonly property bool microphoneMuted:
-        microphoneAvailable ? microphoneControl.muted : true
-    readonly property int microphonePercent: Math.round(microphoneVolume * 100)
-    readonly property string microphoneDescription: microphoneSource
-        ? (microphoneSource.description || microphoneSource.nickname
-            || microphoneSource.name || "Microphone")
-        : "No microphone"
-    readonly property var mediaPlayers: Mpris.players.values
-    readonly property var mediaPlayer: {
-        for (let index = 0; index < mediaPlayers.length; ++index) {
-            if (mediaPlayers[index].isPlaying) {
-                return mediaPlayers[index]
-            }
-        }
-        for (let index = 0; index < mediaPlayers.length; ++index) {
-            if (mediaPlayers[index].trackTitle) {
-                return mediaPlayers[index]
-            }
-        }
-        return mediaPlayers.length > 0 ? mediaPlayers[0] : null
-    }
-    readonly property bool mediaAvailable: mediaPlayer !== null
-        || audioStreams.length > 0
-    readonly property string mediaTitle: mediaPlayer
-        ? (mediaPlayer.trackTitle || mediaPlayer.identity || "Media playback")
-        : (audioStreams.length > 0
-            ? (audioStreams[0].description || audioStreams[0].name || "Audio stream")
-            : "Nothing is playing")
-    readonly property string mediaSubtitle: mediaPlayer
-        ? (mediaPlayer.trackArtist || mediaPlayer.identity || "Media player")
-        : (audioStreams.length > 0 ? "Active audio stream" : "")
     readonly property var systemResourceItems: [
         {
             label: "CPU",
@@ -197,6 +158,9 @@ PanelWindow {
     ]
 
     readonly property var installedApps: {
+        if (!searchOpen) {
+            return []
+        }
         return DesktopEntries.applications.values
             .filter(function(entry) {
                 return entry && entry.name && !entry.noDisplay
@@ -281,7 +245,7 @@ PanelWindow {
     readonly property var runningUnpinnedApps: {
         // Touch the installed application model so this binding is refreshed
         // when Quickshell finishes indexing desktop entries.
-        const availableApplications = installedApps
+        const availableApplications = DesktopEntries.applications.values
         const windows = window.windowTracker.clientWindows
         const result = []
         const seen = ({})
@@ -302,33 +266,6 @@ PanelWindow {
         return result
     }
     readonly property var taskbarApps: resolvedPinnedApps.concat(runningUnpinnedApps)
-    readonly property var networkDevices: Networking.devices.values
-    readonly property var connectedNetwork: {
-        for (let deviceIndex = 0; deviceIndex < networkDevices.length; ++deviceIndex) {
-            const networks = networkDevices[deviceIndex].networks.values
-            for (let networkIndex = 0; networkIndex < networks.length; ++networkIndex) {
-                if (networks[networkIndex].connected) {
-                    return networks[networkIndex]
-                }
-            }
-        }
-        return null
-    }
-    readonly property string networkIconName: {
-        if (!connectedNetwork) {
-            return Networking.wifiEnabled
-                ? "network-wireless-offline-symbolic" : "network-offline-symbolic"
-        }
-        if (connectedNetwork.device.type === DeviceType.Wired) {
-            return "network-wired-symbolic"
-        }
-        const strength = Number(connectedNetwork.signalStrength || 0)
-        if (strength >= 0.75) return "network-wireless-signal-excellent-symbolic"
-        if (strength >= 0.50) return "network-wireless-signal-good-symbolic"
-        if (strength >= 0.25) return "network-wireless-signal-ok-symbolic"
-        return "network-wireless-signal-weak-symbolic"
-    }
-
     IpcHandler {
         target: "bar"
         enabled: Quickshell.screens.length > 0
@@ -460,9 +397,13 @@ PanelWindow {
         return id.endsWith(".desktop") ? id.substring(0, id.length - 8) : id
     }
 
+    function compactDesktopIdentity(value) {
+        return normalizedDesktopKey(value).replace(/[^a-z0-9]/g, "")
+    }
+
     function desktopEntryByKey(pinKey) {
         const wanted = normalizedDesktopKey(pinKey)
-        const entries = installedApps
+        const entries = DesktopEntries.applications.values
         for (let index = 0; index < entries.length; ++index) {
             if (normalizedDesktopKey(entries[index].id) === wanted) {
                 return entries[index]
@@ -480,15 +421,37 @@ PanelWindow {
         const normalizedClasses = (classes || []).map(function(value) {
             return String(value).toLowerCase()
         })
-        const entries = installedApps
+        const compactClasses = normalizedClasses.map(function(value) {
+            return compactDesktopIdentity(value)
+        })
+        const entries = DesktopEntries.applications.values
 
         for (let index = 0; index < entries.length; ++index) {
             const entry = entries[index]
             const startupClass = String(entry.startupClass || "").toLowerCase()
             const entryId = normalizedDesktopKey(entry.id)
+            const startupParts = startupClass.split(".")
+            const entryIdParts = entryId.split(".")
+            const identities = [
+                startupClass,
+                entryId,
+                startupParts[startupParts.length - 1],
+                entryIdParts[entryIdParts.length - 1],
+                String(entry.name || "").toLowerCase()
+            ]
             if ((startupClass.length > 0 && normalizedClasses.indexOf(startupClass) !== -1)
                     || normalizedClasses.indexOf(entryId) !== -1) {
                 return entry
+            }
+
+            for (let identityIndex = 0;
+                    identityIndex < identities.length; ++identityIndex) {
+                const identityKey = compactDesktopIdentity(
+                    identities[identityIndex])
+                if (identityKey.length >= 4
+                        && compactClasses.indexOf(identityKey) !== -1) {
+                    return entry
+                }
             }
         }
 
@@ -540,7 +503,31 @@ PanelWindow {
         const pinKey = window.pinnedState.recordKey(record)
         const predefined = Apps.byPinKey(pinKey)
         if (predefined) {
-            return predefined
+            const runningClasses = window.classesForPinKey(pinKey)
+            if (runningClasses.length === 0) {
+                return predefined
+            }
+
+            const mergedClasses = (predefined.wmClasses || []).slice()
+            const knownClasses = ({})
+            for (let index = 0; index < mergedClasses.length; ++index) {
+                knownClasses[String(mergedClasses[index]).toLowerCase()] = true
+            }
+            for (let index = 0; index < runningClasses.length; ++index) {
+                const className = String(runningClasses[index])
+                const classKey = className.toLowerCase()
+                if (!knownClasses[classKey]) {
+                    knownClasses[classKey] = true
+                    mergedClasses.push(className)
+                }
+            }
+
+            const mergedApp = ({})
+            for (const propertyName in predefined) {
+                mergedApp[propertyName] = predefined[propertyName]
+            }
+            mergedApp.wmClasses = mergedClasses
+            return mergedApp
         }
 
         const entry = desktopEntryByKey(pinKey)
@@ -581,13 +568,23 @@ PanelWindow {
 
     function classesForPinKey(pinKey) {
         const clients = window.windowTracker.clientWindows
-        for (let index = clients.length - 1; index >= 0; --index) {
+        const result = []
+        const seen = ({})
+        for (let index = 0; index < clients.length; ++index) {
             if (!clients[index].skipTaskbar
                     && pinKeyForClient(clients[index]) === pinKey) {
-                return clients[index].classes
+                const classes = clients[index].classes || []
+                for (let classIndex = 0; classIndex < classes.length; ++classIndex) {
+                    const className = String(classes[classIndex])
+                    const classKey = className.toLowerCase()
+                    if (!seen[classKey]) {
+                        seen[classKey] = true
+                        result.push(className)
+                    }
+                }
             }
         }
-        return []
+        return result
     }
 
     function appFromClientWindow(client) {
@@ -882,7 +879,7 @@ PanelWindow {
         searchQuery = ""
         Qt.callLater(function() {
             searchInput.forceActiveFocus()
-            resultsList.currentIndex = resultsList.count > 0 ? 0 : -1
+            searchPopupLoader.resetSelection()
         })
     }
 
@@ -890,7 +887,6 @@ PanelWindow {
         searchOpen = false
         searchQuery = ""
         searchInput.text = ""
-        resultsList.currentIndex = -1
         searchInput.focus = false
     }
 
@@ -915,7 +911,6 @@ PanelWindow {
 
     function closeAudio() {
         audioOpen = false
-        audioDeviceChooser = ""
     }
 
     function toggleAudio() {
@@ -1071,55 +1066,6 @@ PanelWindow {
     function toggleAudioMute() {
         if (audioAvailable) {
             audioControl.muted = !audioControl.muted
-        }
-    }
-
-    function setMicrophoneVolume(value) {
-        if (!microphoneAvailable) {
-            return
-        }
-
-        microphoneControl.volume = Math.max(0, Math.min(1, Number(value)))
-    }
-
-    function toggleMicrophoneMute() {
-        if (microphoneAvailable) {
-            microphoneControl.muted = !microphoneControl.muted
-        }
-    }
-
-    function openAudioDeviceChooser(kind) {
-        audioDeviceChooser = kind === "source" ? "source" : "sink"
-    }
-
-    function selectAudioDevice(node) {
-        if (!node) {
-            return
-        }
-
-        if (audioDeviceChooser === "source") {
-            Pipewire.preferredDefaultAudioSource = node
-        } else {
-            Pipewire.preferredDefaultAudioSink = node
-        }
-        audioDeviceChooser = ""
-    }
-
-    function toggleMediaPlayback() {
-        if (mediaPlayer && mediaPlayer.canTogglePlaying) {
-            mediaPlayer.togglePlaying()
-        }
-    }
-
-    function previousMediaTrack() {
-        if (mediaPlayer && mediaPlayer.canGoPrevious) {
-            mediaPlayer.previous()
-        }
-    }
-
-    function nextMediaTrack() {
-        if (mediaPlayer && mediaPlayer.canGoNext) {
-            mediaPlayer.next()
         }
     }
 
@@ -1326,21 +1272,14 @@ PanelWindow {
         })
         fileResults = nextResults
 
-        if (searchOpen && resultsList.currentIndex < 0) {
-            resultsList.currentIndex = 0
-        }
     }
 
     Theme { id: theme }
 
-    // PipeWire objects expose live properties only while explicitly tracked.
+    // Keep only the default output live while the popup is closed. The audio
+    // popup tracks microphones, devices and streams only while it is loaded.
     PwObjectTracker {
-        objects: window.pipewireNodes
-    }
-
-    ScriptModel {
-        id: searchModel
-        values: window.searchItems
+        objects: window.audioSink ? [window.audioSink] : []
     }
 
     Timer {
@@ -1675,9 +1614,7 @@ PanelWindow {
 
                         onTextChanged: {
                             window.searchQuery = text
-                            Qt.callLater(function() {
-                                resultsList.currentIndex = resultsList.count > 0 ? 0 : -1
-                            })
+                            Qt.callLater(searchPopupLoader.resetSelection)
                         }
 
                         Keys.onPressed: function(event) {
@@ -1685,28 +1622,14 @@ PanelWindow {
                                 window.closeSearch()
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Down) {
-                                if (resultsList.count > 0) {
-                                    resultsList.currentIndex = Math.min(
-                                        resultsList.currentIndex + 1,
-                                        resultsList.count - 1)
-                                    resultsList.positionViewAtIndex(
-                                        resultsList.currentIndex,
-                                        ListView.Contain)
-                                }
+                                searchPopupLoader.moveSelection(1)
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Up) {
-                                if (resultsList.count > 0) {
-                                    resultsList.currentIndex = Math.max(
-                                        resultsList.currentIndex - 1,
-                                        0)
-                                    resultsList.positionViewAtIndex(
-                                        resultsList.currentIndex,
-                                        ListView.Contain)
-                                }
+                                searchPopupLoader.moveSelection(-1)
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Return
                                     || event.key === Qt.Key_Enter) {
-                                window.launchResult(resultsList.currentIndex)
+                                searchPopupLoader.activateSelected()
                                 event.accepted = true
                             }
                         }
@@ -1743,6 +1666,7 @@ PanelWindow {
 
                             app: modelData
                             themeData: theme
+                            draggable: String(modelData.pinKey || "").length > 0
                             running: trackedWindowId.length > 0
                             active: window.windowTracker.classesAreActive(modelData.wmClasses)
                             launchOnClick: false
@@ -1756,6 +1680,31 @@ PanelWindow {
                                 const point = mapToItem(bar, width / 2, height)
                                 window.openContextMenu(
                                     modelData, trackedWindowId, active, point.x)
+                            }
+                            onReorderStarted: {
+                                window.taskbarReordering = true
+                                window.closeContextMenu()
+                            }
+                            onReorderFinished: function(sceneX) {
+                                window.taskbarReordering = false
+                                const localPoint = pinnedRow.mapFromItem(
+                                    null, sceneX, 0)
+                                const stride = theme.buttonSize + theme.itemSpacing
+                                let targetIndex = Math.round(
+                                    (localPoint.x - theme.buttonSize / 2) / stride)
+                                const pinnedCount = window.pinnedState.pins.length
+                                const alreadyPinned = window.pinnedState.isPinned(
+                                    modelData.pinKey)
+                                const maximumIndex = alreadyPinned
+                                    ? Math.max(0, pinnedCount - 1)
+                                    : pinnedCount
+                                targetIndex = Math.max(
+                                    0, Math.min(targetIndex, maximumIndex))
+                                window.pinnedState.place(
+                                    window.pinRecordForApp(modelData), targetIndex)
+                            }
+                            onReorderCanceled: {
+                                window.taskbarReordering = false
                             }
                         }
                     }
@@ -1818,18 +1767,25 @@ PanelWindow {
                         visible: SystemTray.items.values.length > 0
                     }
 
-                    Row {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 3
+                    Component {
+                        id: audioQuickActionComponent
 
                         AudioButton {
-                            id: audioButton
+                            id: audioQuickButton
 
+                            draggable: true
                             themeData: theme
                             volume: window.audioVolume
                             muted: window.audioMuted
                             available: window.audioAvailable
                             open: window.audioOpen
+
+                            Component.onCompleted: window.audioAnchorItem = audioQuickButton
+                            Component.onDestruction: {
+                                if (window.audioAnchorItem === audioQuickButton) {
+                                    window.audioAnchorItem = null
+                                }
+                            }
 
                             onActivated: window.toggleAudio()
                             onMuteRequested: window.toggleAudioMute()
@@ -1841,27 +1797,45 @@ PanelWindow {
                                 window.adjustAudioVolume(step)
                             }
                         }
+                    }
+
+                    Component {
+                        id: screenshotQuickActionComponent
 
                         AppButton {
+                            draggable: true
                             app: window.screenshotAction
                             themeData: theme
                         }
+                    }
+
+                    Component {
+                        id: clipboardQuickActionComponent
 
                         AppButton {
-                            id: clipboardButton
+                            draggable: true
                             app: window.clipboardAction
                             themeData: theme
                             launchOnClick: false
                             onActivated: window.toggleClipboard()
                         }
+                    }
+
+                    Component {
+                        id: desktopQuickActionComponent
 
                         AppButton {
+                            draggable: true
                             app: window.showDesktopAction
                             themeData: theme
                         }
+                    }
+
+                    Component {
+                        id: statusQuickActionComponent
 
                         StatusIconButton {
-                            id: statusCenterButton
+                            draggable: true
                             themeData: theme
                             glyph: window.networkOpen || window.notificationsOpen
                                 ? "" : ""
@@ -1874,6 +1848,60 @@ PanelWindow {
                                     window.closeNotifications()
                                 } else {
                                     window.openNetwork()
+                                }
+                            }
+                        }
+                    }
+
+                    Row {
+                        id: quickActionsRow
+
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: 3
+
+                        Repeater {
+                            model: window.quickActionState.normalizedOrder()
+
+                            Loader {
+                                id: quickActionLoader
+
+                                required property var modelData
+                                readonly property string actionKey: String(modelData)
+                                sourceComponent: actionKey === "audio"
+                                    ? audioQuickActionComponent
+                                    : (actionKey === "screenshot"
+                                        ? screenshotQuickActionComponent
+                                        : (actionKey === "clipboard"
+                                            ? clipboardQuickActionComponent
+                                            : (actionKey === "desktop"
+                                                ? desktopQuickActionComponent
+                                                : statusQuickActionComponent)))
+
+                                Connections {
+                                    target: quickActionLoader.item
+
+                                    function onReorderStarted() {
+                                        window.taskbarReordering = true
+                                        window.closeContextMenu()
+                                    }
+
+                                    function onReorderFinished(sceneX) {
+                                        window.taskbarReordering = false
+                                        const localPoint = quickActionsRow.mapFromItem(
+                                            null, sceneX, 0)
+                                        const stride = theme.buttonSize + quickActionsRow.spacing
+                                        let targetIndex = Math.round(
+                                            (localPoint.x - theme.buttonSize / 2) / stride)
+                                        targetIndex = Math.max(0, Math.min(
+                                            targetIndex,
+                                            window.quickActionState.normalizedOrder().length - 1))
+                                        window.quickActionState.place(
+                                            quickActionLoader.actionKey, targetIndex)
+                                    }
+
+                                    function onReorderCanceled() {
+                                        window.taskbarReordering = false
+                                    }
                                 }
                             }
                         }
@@ -1970,1713 +1998,137 @@ PanelWindow {
     Loader {
         id: clipboardPopupLoader
         anchors.fill: parent
-        active: window.clipboardOpen
         z: 18
 
-        sourceComponent: Component {
-            Item {
-                MouseArea {
-                    id: clipboardDismissArea
-
-        x: 0
-        y: 0
-        width: window.width
-        height: Math.max(0, bar.y)
-        visible: window.clipboardOpen
-        z: 18
-        onClicked: window.closeClipboard()
-    }
-
-                Rectangle {
-                    id: clipboardPopup
-
-        x: bar.x + bar.width - width - 84
-        y: bar.y - 8 - height
-        width: 360
-        height: window.clipboardPopupHeight
-        radius: theme.radius
-        color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.985)
-        border.width: 1
-        border.color: Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.82)
-        opacity: window.clipboardOpen ? 1 : 0
-        scale: window.clipboardOpen ? 1 : 0.96
-        transformOrigin: Item.BottomRight
-        visible: opacity > 0
-        clip: true
-        z: 20
-
-        Behavior on opacity {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
+        function syncSource() {
+            if (window.clipboardOpen) {
+                clipboardUnloadTimer.stop()
+                if (source.toString().length === 0) {
+                    setSource(Qt.resolvedUrl("ClipboardPopup.qml"), {
+                        "host": window,
+                        "themeData": theme,
+                        "barItem": bar
+                    })
+                }
+            } else if (source.toString().length > 0) {
+                clipboardUnloadTimer.restart()
+            }
         }
 
-        Behavior on scale {
-            NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
+        Component.onCompleted: syncSource()
+
+        Connections {
+            target: window
+            function onClipboardOpenChanged() { clipboardPopupLoader.syncSource() }
         }
 
-        Column {
-            anchors {
-                fill: parent
-                margins: 14
-            }
-            spacing: 9
-
-            Item {
-                width: parent.width
-                height: 38
-
-                Row {
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    spacing: 9
-
-                    IconImage {
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitSize: 22
-                        source: window.clipboardAction.iconSource
-                        mipmap: true
-                    }
-
-                    Column {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: -1
-
-                        Text {
-                            text: "Clipboard"
-                            color: theme.text
-                            font.family: theme.fontFamily
-                            font.pixelSize: 13
-                            font.weight: Font.Normal
-                        }
-
-                        Text {
-                            text: window.clipboardItems.length === 1
-                                ? "1 item in the current session"
-                                : window.clipboardItems.length + " items in the current session"
-                            color: theme.overlay
-                            font.family: theme.fontFamily
-                            font.pixelSize: 8
-                            font.weight: Font.Normal
-                        }
-                    }
-                }
-
-                Rectangle {
-                    anchors {
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                    }
-                    width: 66
-                    height: 28
-                    radius: 8
-                    visible: window.clipboardItems.length > 0
-                    color: clearClipboardPointer.containsMouse
-                        ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.18)
-                        : theme.surface0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Clear"
-                        color: clearClipboardPointer.containsMouse ? theme.red : theme.subtext
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: clearClipboardPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.clearClipboardHistory()
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: theme.surface0
-            }
-
-            Item {
-                width: parent.width
-                height: 236
-
-                ListView {
-                    id: clipboardList
-
-                    anchors.fill: parent
-                    clip: true
-                    spacing: 5
-                    model: window.clipboardItems
-                    boundsBehavior: Flickable.StopAtBounds
-
-                    delegate: Rectangle {
-                        required property var modelData
-                        required property int index
-
-                        width: clipboardList.width
-                        height: 42
-                        radius: 10
-                        color: clipboardItemPointer.containsMouse
-                            ? theme.surface1 : theme.surface0
-                        border.width: 1
-                        border.color: index === 0
-                            ? Qt.rgba(theme.mauve.r, theme.mauve.g, theme.mauve.b, 0.75)
-                            : Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.45)
-
-                        Behavior on color { ColorAnimation { duration: 90 } }
-
-                        Rectangle {
-                            anchors {
-                                left: parent.left
-                                leftMargin: 8
-                                verticalCenter: parent.verticalCenter
-                            }
-                            width: 24
-                            height: 24
-                            radius: 7
-                            color: parent.index === 0
-                                ? Qt.rgba(theme.mauve.r, theme.mauve.g, theme.mauve.b, 0.22)
-                                : theme.surface1
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: String(parent.parent.index + 1)
-                                color: parent.parent.index === 0 ? theme.mauve : theme.overlay
-                                font.family: theme.monoFamily
-                                font.pixelSize: 9
-                                font.weight: Font.Normal
-                            }
-                        }
-
-                        Column {
-                            anchors {
-                                left: parent.left
-                                leftMargin: 40
-                                right: deleteClipboardButton.left
-                                rightMargin: 7
-                                verticalCenter: parent.verticalCenter
-                            }
-                            spacing: -1
-
-                            Text {
-                                width: parent.width
-                                text: window.clipboardPreview(parent.parent.modelData.text)
-                                color: theme.text
-                                elide: Text.ElideRight
-                                font.family: theme.fontFamily
-                                font.pixelSize: 10
-                                font.weight: Font.Normal
-                            }
-
-                            Text {
-                                text: parent.parent.index === 0
-                                    ? "Current clipboard" : "Click to select"
-                                color: parent.parent.index === 0 ? theme.mauve : theme.overlay
-                                font.family: theme.fontFamily
-                                font.pixelSize: 8
-                                font.weight: Font.Normal
-                            }
-                        }
-
-                        Rectangle {
-                            id: deleteClipboardButton
-                            anchors {
-                                right: parent.right
-                                rightMargin: 7
-                                verticalCenter: parent.verticalCenter
-                            }
-                            width: 26
-                            height: 26
-                            radius: 8
-                            color: deleteClipboardPointer.containsMouse
-                                ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.18)
-                                : "transparent"
-                            z: 3
-
-                            Text {
-                                anchors.centerIn: parent
-                                text: "×"
-                                color: deleteClipboardPointer.containsMouse
-                                    ? theme.red : theme.overlay
-                                font.family: theme.fontFamily
-                                font.pixelSize: 14
-                                font.weight: Font.Normal
-                            }
-
-                            MouseArea {
-                                id: deleteClipboardPointer
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: window.removeClipboardItem(
-                                    deleteClipboardButton.parent.index)
-                            }
-                        }
-
-                        MouseArea {
-                            id: clipboardItemPointer
-                            anchors {
-                                left: parent.left
-                                top: parent.top
-                                bottom: parent.bottom
-                                right: deleteClipboardButton.left
-                            }
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.selectClipboardItem(parent.modelData)
-                        }
-                    }
-                }
-
-                Column {
-                    anchors.centerIn: parent
-                    spacing: 8
-                    visible: window.clipboardItems.length === 0
-
-                    IconImage {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        implicitSize: 34
-                        source: window.clipboardAction.iconSource
-                        mipmap: true
-                        opacity: 0.55
-                    }
-
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "History is empty"
-                        color: theme.subtext
-                        font.family: theme.fontFamily
-                        font.pixelSize: 11
-                        font.weight: Font.Normal
-                    }
-
-                    Text {
-                        anchors.horizontalCenter: parent.horizontalCenter
-                        text: "Copy some text and it will appear here"
-                        color: theme.overlay
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.Normal
-                    }
-                }
-            }
-
-            Text {
-                anchors.horizontalCenter: parent.horizontalCenter
-                text: "Last 10 text entries · stored in memory only"
-                color: theme.overlay
-                font.family: theme.fontFamily
-                font.pixelSize: 8
-                font.weight: Font.Normal
-            }
-        }
-                }
-            }
+        Timer {
+            id: clipboardUnloadTimer
+            interval: 190
+            onTriggered: clipboardPopupLoader.source = ""
         }
     }
 
     Loader {
         id: calendarPopupLoader
         anchors.fill: parent
-        active: window.calendarOpen
-        z: 18
+        z: 19
 
-        sourceComponent: Component {
-            Item {
-                MouseArea {
-                    id: calendarDismissArea
-
-        x: 0
-        y: 0
-        width: window.width
-        height: Math.max(0, bar.y)
-        visible: window.calendarOpen
-        z: 18
-        onClicked: window.closeCalendar()
-    }
-
-                Rectangle {
-                    id: calendarPopup
-
-        x: bar.x + bar.width - width - 52
-        y: bar.y - 8 - height
-        width: 348
-        height: window.calendarPopupHeight
-        radius: theme.radius
-        color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.985)
-        border.width: 1
-        border.color: Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.82)
-        opacity: window.calendarOpen ? 1 : 0
-        scale: window.calendarOpen ? 1 : 0.96
-        transformOrigin: Item.BottomRight
-        visible: opacity > 0
-        clip: true
-        z: 20
-
-        Behavior on opacity {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
-
-        Behavior on scale {
-            NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
-        }
-
-        Column {
-            anchors {
-                fill: parent
-                margins: 16
-            }
-            spacing: 8
-
-            Row {
-                width: parent.width
-                height: 68
-                spacing: 8
-
-                Column {
-                    width: 126
-                    anchors.verticalCenter: parent.verticalCenter
-                    spacing: 0
-
-                    Text {
-                        text: Qt.formatDateTime(window.clockSource.date, "HH:mm")
-                        color: theme.text
-                        font.family: theme.monoFamily
-                        font.pixelSize: 28
-                        font.weight: Font.Normal
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: window.longDateLabel(window.clockSource.date)
-                        color: theme.overlay
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.Normal
-                        elide: Text.ElideRight
-                    }
+        function syncSource() {
+            if (window.calendarOpen) {
+                calendarUnloadTimer.stop()
+                if (source.toString().length === 0) {
+                    setSource(Qt.resolvedUrl("CalendarPopup.qml"), {
+                        "host": window,
+                        "themeData": theme,
+                        "barItem": bar
+                    })
                 }
-
-                Rectangle {
-                    width: parent.width - 134
-                    height: 68
-                    radius: 11
-                    color: theme.surface0
-                    border.width: 1
-                    border.color: Qt.rgba(
-                        theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.65)
-
-                    Row {
-                        anchors {
-                            fill: parent
-                            leftMargin: 10
-                            rightMargin: 10
-                        }
-                        spacing: 9
-
-                        Text {
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: window.weatherGlyph
-                            color: window.weatherFailed ? theme.overlay : theme.yellow
-                            font.family: theme.monoFamily
-                            font.pixelSize: 28
-                            font.weight: Font.Normal
-                        }
-
-                        Column {
-                            anchors.verticalCenter: parent.verticalCenter
-                            spacing: 0
-
-                            Row {
-                                spacing: 6
-
-                                Text {
-                                    text: window.weatherReady
-                                        ? Math.round(window.weatherTemperature) + "°C" : "—°C"
-                                    color: theme.text
-                                    font.family: theme.monoFamily
-                                    font.pixelSize: 15
-                                    font.weight: Font.Normal
-                                }
-
-                                Text {
-                                    anchors.baseline: parent.children[0].baseline
-                                    text: window.weatherLocation
-                                    color: theme.mauve
-                                    font.family: theme.fontFamily
-                                    font.pixelSize: 9
-                                    font.weight: Font.Normal
-                                }
-                            }
-
-                            Text {
-                                text: window.weatherDescription
-                                color: theme.subtext
-                                font.family: theme.fontFamily
-                                font.pixelSize: 9
-                                font.weight: Font.Normal
-                            }
-
-                            Text {
-                                text: window.weatherReady
-                                    ? "Feels like " + Math.round(window.weatherFeelsLike)
-                                        + "° · Wind " + Math.round(window.weatherWindSpeed) + " km/h"
-                                    : "Updates every 15 minutes"
-                                color: theme.overlay
-                                font.family: theme.fontFamily
-                                font.pixelSize: 8
-                                font.weight: Font.Normal
-                            }
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: theme.surface0
-            }
-
-            Item {
-                width: parent.width
-                height: 36
-
-                Rectangle {
-                    id: previousMonthButton
-                    anchors {
-                        left: parent.left
-                        verticalCenter: parent.verticalCenter
-                    }
-                    width: 32
-                    height: 30
-                    radius: 8
-                    color: previousMonthPointer.containsMouse
-                        ? theme.surface1 : theme.surface0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "‹"
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 20
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: previousMonthPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.shiftCalendarMonth(-1)
-                    }
-                }
-
-                Text {
-                    anchors.centerIn: parent
-                    text: window.calendarMonthNames[window.calendarMonth]
-                        + " " + window.calendarYear
-                    color: theme.text
-                    font.family: theme.fontFamily
-                    font.pixelSize: 13
-                    font.weight: Font.Normal
-                }
-
-                Rectangle {
-                    id: todayMonthButton
-                    anchors {
-                        right: nextMonthButton.left
-                        rightMargin: 6
-                        verticalCenter: parent.verticalCenter
-                    }
-                    width: 52
-                    height: 26
-                    radius: 8
-                    color: todayMonthPointer.containsMouse
-                        ? theme.surface1 : "transparent"
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Today"
-                        color: theme.mauve
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: todayMonthPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.resetCalendarMonth()
-                    }
-                }
-
-                Rectangle {
-                    id: nextMonthButton
-                    anchors {
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                    }
-                    width: 32
-                    height: 30
-                    radius: 8
-                    color: nextMonthPointer.containsMouse
-                        ? theme.surface1 : theme.surface0
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "›"
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 20
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: nextMonthPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.shiftCalendarMonth(1)
-                    }
-                }
-            }
-
-            Row {
-                width: parent.width
-                height: 20
-                spacing: 4
-
-                Repeater {
-                    model: window.calendarWeekdayNames
-
-                    Text {
-                        required property var modelData
-                        width: (316 - 24) / 7
-                        height: 20
-                        text: String(modelData)
-                        color: modelData === "Sa" || modelData === "Su"
-                            ? theme.mauve : theme.overlay
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                        font.weight: Font.Normal
-                    }
-                }
-            }
-
-            Grid {
-                id: calendarGrid
-                width: parent.width
-                height: 212
-                columns: 7
-                columnSpacing: 4
-                rowSpacing: 4
-
-                Repeater {
-                    model: window.calendarDays
-
-                    Rectangle {
-                        required property var modelData
-                        width: (calendarGrid.width - calendarGrid.columnSpacing * 6) / 7
-                        height: 32
-                        radius: 9
-                        color: modelData.today
-                            ? theme.mauve
-                            : (calendarDayPointer.containsMouse
-                                ? theme.surface1 : "transparent")
-                        border.width: modelData.current || modelData.today ? 0 : 1
-                        border.color: theme.surface0
-
-                        Behavior on color { ColorAnimation { duration: 90 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: String(parent.modelData.day)
-                            color: parent.modelData.today
-                                ? theme.crust
-                                : (parent.modelData.current ? theme.text : theme.overlay)
-                            opacity: parent.modelData.current || parent.modelData.today ? 1 : 0.52
-                            font.family: theme.monoFamily
-                            font.pixelSize: 11
-                            font.weight: Font.Normal
-                        }
-
-                        MouseArea {
-                            id: calendarDayPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: {
-                                if (!parent.modelData.current) {
-                                    window.calendarYear = parent.modelData.year
-                                    window.calendarMonth = parent.modelData.month
-                                }
-                            }
-                        }
-                    }
-                }
+            } else if (source.toString().length > 0) {
+                calendarUnloadTimer.restart()
             }
         }
-                }
-            }
+
+        Component.onCompleted: syncSource()
+
+        Connections {
+            target: window
+            function onCalendarOpenChanged() { calendarPopupLoader.syncSource() }
+        }
+
+        Timer {
+            id: calendarUnloadTimer
+            interval: 190
+            onTriggered: calendarPopupLoader.source = ""
         }
     }
 
     Loader {
         id: systemPopupLoader
         anchors.fill: parent
-        active: window.systemOpen
-        z: 18
-
-        sourceComponent: Component {
-            Item {
-                MouseArea {
-                    id: systemDismissArea
-
-        x: 0
-        y: 0
-        width: window.width
-        height: Math.max(0, bar.y)
-        visible: window.systemOpen
-        z: 18
-        onClicked: window.closeSystem()
-    }
-
-                Rectangle {
-                    id: systemPopup
-
-        x: bar.x + bar.width - width - 8
-        y: bar.y - 8 - height
-        width: 300
-        height: window.systemPopupHeight
-        radius: theme.radius
-        color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.985)
-        border.width: 1
-        border.color: Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.82)
-        opacity: window.systemOpen ? 1 : 0
-        scale: window.systemOpen ? 1 : 0.96
-        transformOrigin: Item.BottomRight
-        visible: opacity > 0
-        clip: true
         z: 20
 
-        Behavior on opacity {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
-
-        Behavior on scale {
-            NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
-        }
-
-        Column {
-            anchors {
-                fill: parent
-                margins: 14
-            }
-            spacing: 9
-
-            Row {
-                width: parent.width
-                height: 42
-                spacing: 10
-
-                Rectangle {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 40
-                    height: 40
-                    radius: 12
-                    color: theme.surface0
-                    border.width: 1
-                    border.color: theme.surface1
-
-                    Image {
-                        anchors.centerIn: parent
-                        width: 34
-                        height: 34
-                        source: window.configuration.profileImage
-                        fillMode: Image.PreserveAspectFit
-                        smooth: true
-                        mipmap: true
-                    }
+        function syncSource() {
+            if (window.systemOpen) {
+                systemUnloadTimer.stop()
+                if (source.toString().length === 0) {
+                    setSource(Qt.resolvedUrl("SystemPopup.qml"), {
+                        "host": window,
+                        "themeData": theme,
+                        "barItem": bar
+                    })
                 }
-
-                Column {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - 50
-                    spacing: -1
-
-                    Text {
-                        text: window.configuration.profileName
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 14
-                        font.weight: Font.Normal
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: window.systemHostName + "  •  System resources"
-                        color: theme.overlay
-                        elide: Text.ElideRight
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                    }
-                }
-            }
-
-            Grid {
-                id: resourceGrid
-
-                width: parent.width
-                height: 154
-                columns: 2
-                columnSpacing: 8
-                rowSpacing: 8
-
-                Repeater {
-                    model: window.systemResourceItems
-
-                    Rectangle {
-                        id: resourceCard
-
-                        required property var modelData
-                        width: (resourceGrid.width - resourceGrid.columnSpacing) / 2
-                        height: 73
-                        radius: 11
-                        color: theme.surface0
-
-                        Text {
-                            anchors {
-                                left: parent.left
-                                top: parent.top
-                                leftMargin: 10
-                                topMargin: 8
-                            }
-                            text: resourceCard.modelData.label
-                            color: resourceCard.modelData.accent
-                            font.family: theme.fontFamily
-                            font.pixelSize: 10
-                            font.weight: Font.Normal
-                        }
-
-                        Text {
-                            anchors {
-                                right: parent.right
-                                top: parent.top
-                                rightMargin: 10
-                                topMargin: 7
-                            }
-                            text: resourceCard.modelData.value
-                            color: theme.text
-                            font.family: theme.monoFamily
-                            font.pixelSize: 12
-                            font.weight: Font.Normal
-                        }
-
-                        Rectangle {
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                top: parent.top
-                                leftMargin: 10
-                                rightMargin: 10
-                                topMargin: 34
-                            }
-                            height: 5
-                            radius: 3
-                            color: theme.surface1
-
-                            Rectangle {
-                                width: parent.width * Math.max(0,
-                                    Math.min(1, Number(resourceCard.modelData.level)))
-                                height: parent.height
-                                radius: parent.radius
-                                color: resourceCard.modelData.accent
-
-                                Behavior on width {
-                                    NumberAnimation {
-                                        duration: 280
-                                        easing.type: Easing.OutCubic
-                                    }
-                                }
-                            }
-                        }
-
-                        Text {
-                            anchors {
-                                left: parent.left
-                                right: parent.right
-                                bottom: parent.bottom
-                                leftMargin: 10
-                                rightMargin: 10
-                                bottomMargin: 8
-                            }
-                            text: resourceCard.modelData.detail
-                            color: theme.overlay
-                            elide: Text.ElideRight
-                            font.family: theme.fontFamily
-                            font.pixelSize: 8
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: theme.surface0
-            }
-
-            Row {
-                width: parent.width
-                height: 42
-                spacing: 7
-
-                Repeater {
-                    model: [
-                        { action: "switch-user", icon: "⇄", label: "Switch user" },
-                        { action: "restart", icon: "↻", label: "Restart" },
-                        { action: "shutdown", icon: "⏻", label: "Shut down" }
-                    ]
-
-                    Rectangle {
-                        id: systemActionButton
-
-                        required property var modelData
-                        width: (parent.width - 2 * parent.spacing) / 3
-                        height: parent.height
-                        radius: 10
-                        color: systemActionPointer.containsMouse
-                            ? (modelData.action === "shutdown"
-                                ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.20)
-                                : theme.surface1)
-                            : theme.surface0
-
-                        Behavior on color { ColorAnimation { duration: 100 } }
-
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 5
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: systemActionButton.modelData.icon
-                                color: systemActionButton.modelData.action === "shutdown"
-                                    ? theme.red : theme.mauve
-                                font.family: theme.fontFamily
-                                font.pixelSize: 14
-                                font.weight: Font.Normal
-                            }
-
-                            Text {
-                                anchors.verticalCenter: parent.verticalCenter
-                                text: systemActionButton.modelData.label
-                                color: theme.subtext
-                                font.family: theme.fontFamily
-                                font.pixelSize: 9
-                                font.weight: Font.Normal
-                            }
-                        }
-
-                        MouseArea {
-                            id: systemActionPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.requestSystemAction(
-                                systemActionButton.modelData.action)
-                        }
-                    }
-                }
+            } else if (source.toString().length > 0) {
+                systemUnloadTimer.restart()
             }
         }
 
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.995)
-            visible: window.systemConfirmAction.length > 0
-            z: 30
+        Component.onCompleted: syncSource()
 
-            Column {
-                anchors.centerIn: parent
-                width: parent.width - 40
-                spacing: 14
-
-                Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: window.systemConfirmAction === "restart" ? "↻" : "⏻"
-                    color: window.systemConfirmAction === "restart"
-                        ? theme.mauve : theme.red
-                    font.family: theme.fontFamily
-                    font.pixelSize: 32
-                }
-
-                Text {
-                    width: parent.width
-                    text: window.systemConfirmAction === "restart"
-                        ? "Restart the computer?"
-                        : "Shut down the computer?"
-                    color: theme.text
-                    horizontalAlignment: Text.AlignHCenter
-                    font.family: theme.fontFamily
-                    font.pixelSize: 14
-                    font.weight: Font.Normal
-                }
-
-                Text {
-                    width: parent.width
-                    text: "Save your open work before continuing."
-                    color: theme.overlay
-                    horizontalAlignment: Text.AlignHCenter
-                    wrapMode: Text.WordWrap
-                    font.family: theme.fontFamily
-                    font.pixelSize: 10
-                }
-
-                Row {
-                    width: parent.width
-                    height: 38
-                    spacing: 8
-
-                    Rectangle {
-                        width: (parent.width - parent.spacing) / 2
-                        height: parent.height
-                        radius: 10
-                        color: cancelSystemPointer.containsMouse
-                            ? theme.surface1 : theme.surface0
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Cancel"
-                            color: theme.subtext
-                            font.family: theme.fontFamily
-                            font.pixelSize: 11
-                            font.weight: Font.Normal
-                        }
-
-                        MouseArea {
-                            id: cancelSystemPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.systemConfirmAction = ""
-                        }
-                    }
-
-                    Rectangle {
-                        width: (parent.width - parent.spacing) / 2
-                        height: parent.height
-                        radius: 10
-                        color: confirmSystemPointer.containsMouse
-                            ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.34)
-                            : Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.20)
-                        border.width: 1
-                        border.color: theme.red
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "Confirm"
-                            color: theme.red
-                            font.family: theme.fontFamily
-                            font.pixelSize: 11
-                            font.weight: Font.Normal
-                        }
-
-                        MouseArea {
-                            id: confirmSystemPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.confirmSystemAction()
-                        }
-                    }
-                }
-            }
+        Connections {
+            target: window
+            function onSystemOpenChanged() { systemPopupLoader.syncSource() }
         }
-                }
-            }
+
+        Timer {
+            id: systemUnloadTimer
+            interval: 190
+            onTriggered: systemPopupLoader.source = ""
         }
     }
 
     Loader {
         id: audioPopupLoader
         anchors.fill: parent
-        active: window.audioOpen
-        z: 18
+        z: 21
 
-        sourceComponent: Component {
-            Item {
-                MouseArea {
-                    id: audioDismissArea
-
-        x: 0
-        y: 0
-        width: window.width
-        height: Math.max(0, bar.y)
-        visible: window.audioOpen
-        z: 18
-        onClicked: window.closeAudio()
-    }
-
-                Rectangle {
-                    id: audioPopup
-
-        x: bar.x + bar.width - width - 8
-        y: bar.y - 8 - height
-        width: 286
-        height: window.audioPopupHeight
-        radius: theme.radius
-        color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.985)
-        border.width: 1
-        border.color: Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.82)
-        opacity: window.audioOpen ? 1 : 0
-        scale: window.audioOpen ? 1 : 0.96
-        transformOrigin: Item.BottomRight
-        visible: opacity > 0
-        clip: true
-        z: 20
-
-        Behavior on opacity {
-            NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
-        }
-
-        Behavior on scale {
-            NumberAnimation { duration: 170; easing.type: Easing.OutCubic }
-        }
-
-        Column {
-            anchors {
-                fill: parent
-                margins: 14
-            }
-            spacing: 8
-
-            Row {
-                width: parent.width
-                height: 30
-                spacing: 9
-
-                IconImage {
-                    anchors.verticalCenter: parent.verticalCenter
-                    implicitSize: 23
-                    source: audioButton.iconSource
-                    mipmap: true
+        function syncSource() {
+            if (window.audioOpen) {
+                audioUnloadTimer.stop()
+                if (source.toString().length === 0) {
+                    setSource(Qt.resolvedUrl("AudioPopup.qml"), {
+                        "host": window,
+                        "themeData": theme,
+                        "barItem": bar,
+                        "anchorItem": window.audioAnchorItem
+                    })
                 }
-
-                Column {
-                    y: Math.round((parent.height - height) / 2)
-                    width: parent.width - 79
-                    spacing: -1
-
-                    Text {
-                        text: "Audio output  ▾"
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 13
-                        font.weight: Font.Normal
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: window.audioDescription
-                        color: theme.overlay
-                        elide: Text.ElideRight
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                    }
-
-                    TapHandler {
-                        cursorShape: Qt.PointingHandCursor
-                        onTapped: window.openAudioDeviceChooser("sink")
-                    }
-                }
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 38
-                    text: window.audioAvailable ? window.audioPercent + "%" : "—"
-                    color: window.audioMuted ? theme.red : theme.mauve
-                    horizontalAlignment: Text.AlignRight
-                    font.family: theme.monoFamily
-                    font.pixelSize: 12
-                    font.weight: Font.Normal
-
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                }
-            }
-
-            Item {
-                id: volumeSlider
-
-                width: parent.width
-                height: 34
-                enabled: window.audioAvailable
-                readonly property real level: Math.max(0, Math.min(1, window.audioVolume))
-
-                Rectangle {
-                    id: volumeTrack
-
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: 3
-                        rightMargin: 3
-                    }
-                    height: 6
-                    radius: 3
-                    color: theme.surface1
-
-                    Rectangle {
-                        width: parent.width * volumeSlider.level
-                        height: parent.height
-                        radius: parent.radius
-                        color: window.audioMuted ? theme.red : theme.mauve
-
-                        Behavior on width {
-                            NumberAnimation { duration: 70; easing.type: Easing.OutCubic }
-                        }
-                        Behavior on color { ColorAnimation { duration: 100 } }
-                    }
-
-                    Rectangle {
-                        x: Math.max(-width / 2,
-                            Math.min(parent.width - width / 2,
-                                parent.width * volumeSlider.level - width / 2))
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: volumePointer.pressed ? 15 : 13
-                        height: width
-                        radius: width / 2
-                        color: theme.rosewater
-                        border.width: 2
-                        border.color: theme.mauve
-
-                        Behavior on x {
-                            NumberAnimation { duration: 70; easing.type: Easing.OutCubic }
-                        }
-                        Behavior on width { NumberAnimation { duration: 80 } }
-                    }
-                }
-
-                MouseArea {
-                    id: volumePointer
-
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-
-                    function setFromX(pointerX) {
-                        const trackX = volumeTrack.x
-                        const ratio = (pointerX - trackX) / volumeTrack.width
-                        window.setAudioVolume(ratio)
-                    }
-
-                    onPressed: function(mouse) {
-                        setFromX(mouse.x)
-                    }
-                    onPositionChanged: function(mouse) {
-                        if (pressed) {
-                            setFromX(mouse.x)
-                        }
-                    }
-                    onWheel: function(wheel) {
-                        window.adjustAudioVolume(wheel.angleDelta.y > 0 ? 0.05 : -0.05)
-                        wheel.accepted = true
-                    }
-                }
-            }
-
-            Row {
-                width: parent.width
-                height: 34
-                spacing: 8
-
-                Rectangle {
-                    width: (parent.width - parent.spacing) / 2
-                    height: parent.height
-                    radius: 9
-                    color: mutePointer.containsMouse
-                        ? Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.72)
-                        : (window.audioMuted
-                            ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.18)
-                            : theme.surface0)
-
-                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: window.audioMuted ? "Unmute" : "Mute"
-                        color: window.audioMuted ? theme.red : theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 11
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: mutePointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.toggleAudioMute()
-                    }
-                }
-
-                Rectangle {
-                    width: (parent.width - parent.spacing) / 2
-                    height: parent.height
-                    radius: 9
-                    color: mixerPointer.containsMouse ? theme.surface1 : theme.surface0
-
-                    Behavior on color { ColorAnimation { duration: 100 } }
-
-                    Text {
-                        anchors.centerIn: parent
-                        text: "Audio mixer"
-                        color: theme.subtext
-                        font.family: theme.fontFamily
-                        font.pixelSize: 11
-                        font.weight: Font.Normal
-                    }
-
-                    MouseArea {
-                        id: mixerPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            window.closeAudio()
-                            Quickshell.execDetached(["pavucontrol"])
-                        }
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: theme.surface0
-            }
-
-            Row {
-                width: parent.width
-                height: 30
-                spacing: 9
-
-                IconImage {
-                    anchors.verticalCenter: parent.verticalCenter
-                    implicitSize: 22
-                    source: window.microphoneMuted
-                        ? window.assetIconDirectory + "catppuccin-microphone-muted.svg"
-                        : window.assetIconDirectory + "catppuccin-microphone.svg"
-                    mipmap: true
-                    opacity: window.microphoneAvailable ? 1 : 0.45
-
-                    MouseArea {
-                        anchors.fill: parent
-                        enabled: window.microphoneAvailable
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.toggleMicrophoneMute()
-                    }
-                }
-
-                Column {
-                    y: Math.round((parent.height - height) / 2)
-                    width: parent.width - 79
-                    spacing: -1
-
-                    Text {
-                        text: "Microphone  ▾"
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 12
-                        font.weight: Font.Normal
-                    }
-
-                    Text {
-                        width: parent.width
-                        text: window.microphoneDescription
-                        color: theme.overlay
-                        elide: Text.ElideRight
-                        font.family: theme.fontFamily
-                        font.pixelSize: 9
-                    }
-
-                    TapHandler {
-                        cursorShape: Qt.PointingHandCursor
-                        onTapped: window.openAudioDeviceChooser("source")
-                    }
-                }
-
-                Text {
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: 38
-                    text: window.microphoneAvailable
-                        ? window.microphonePercent + "%"
-                        : "—"
-                    color: window.microphoneMuted ? theme.red : theme.blue
-                    horizontalAlignment: Text.AlignRight
-                    font.family: theme.monoFamily
-                    font.pixelSize: 11
-                    font.weight: Font.Normal
-
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                }
-            }
-
-            Item {
-                id: microphoneSlider
-
-                width: parent.width
-                height: 28
-                enabled: window.microphoneAvailable
-                readonly property real level:
-                    Math.max(0, Math.min(1, window.microphoneVolume))
-
-                Rectangle {
-                    id: microphoneTrack
-
-                    anchors {
-                        left: parent.left
-                        right: parent.right
-                        verticalCenter: parent.verticalCenter
-                        leftMargin: 3
-                        rightMargin: 3
-                    }
-                    height: 5
-                    radius: 3
-                    color: theme.surface1
-
-                    Rectangle {
-                        width: parent.width * microphoneSlider.level
-                        height: parent.height
-                        radius: parent.radius
-                        color: window.microphoneMuted ? theme.red : theme.blue
-
-                        Behavior on width {
-                            NumberAnimation { duration: 70; easing.type: Easing.OutCubic }
-                        }
-                        Behavior on color { ColorAnimation { duration: 100 } }
-                    }
-
-                    Rectangle {
-                        x: Math.max(-width / 2,
-                            Math.min(parent.width - width / 2,
-                                parent.width * microphoneSlider.level - width / 2))
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: microphonePointer.pressed ? 14 : 12
-                        height: width
-                        radius: width / 2
-                        color: theme.rosewater
-                        border.width: 2
-                        border.color: theme.blue
-
-                        Behavior on x {
-                            NumberAnimation { duration: 70; easing.type: Easing.OutCubic }
-                        }
-                        Behavior on width { NumberAnimation { duration: 80 } }
-                    }
-                }
-
-                MouseArea {
-                    id: microphonePointer
-
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-
-                    function setFromX(pointerX) {
-                        const ratio = (pointerX - microphoneTrack.x)
-                            / microphoneTrack.width
-                        window.setMicrophoneVolume(ratio)
-                    }
-
-                    onPressed: function(mouse) {
-                        setFromX(mouse.x)
-                    }
-                    onPositionChanged: function(mouse) {
-                        if (pressed) {
-                            setFromX(mouse.x)
-                        }
-                    }
-                    onWheel: function(wheel) {
-                        window.setMicrophoneVolume(window.microphoneVolume
-                            + (wheel.angleDelta.y > 0 ? 0.05 : -0.05))
-                        wheel.accepted = true
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: theme.surface0
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 68
-                radius: 10
-                color: theme.surface0
-
-                Row {
-                    anchors {
-                        fill: parent
-                        margins: 9
-                    }
-                    spacing: 8
-
-                    IconImage {
-                        anchors.verticalCenter: parent.verticalCenter
-                        implicitSize: 23
-                        source: window.assetIconDirectory + "catppuccin-media.svg"
-                        mipmap: true
-                        opacity: window.mediaAvailable ? 1 : 0.42
-                    }
-
-                    Column {
-                        y: Math.round((parent.height - height) / 2)
-                        width: parent.width - 104
-                        spacing: 0
-
-                        Text {
-                            text: "Now playing"
-                            color: theme.overlay
-                            font.family: theme.fontFamily
-                            font.pixelSize: 9
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: window.mediaTitle
-                            color: theme.text
-                            elide: Text.ElideRight
-                            font.family: theme.fontFamily
-                            font.pixelSize: 11
-                            font.weight: Font.Normal
-                        }
-
-                        Text {
-                            width: parent.width
-                            text: window.mediaSubtitle
-                            color: theme.subtext
-                            elide: Text.ElideRight
-                            font.family: theme.fontFamily
-                            font.pixelSize: 9
-                        }
-                    }
-
-                    Row {
-                        anchors.verticalCenter: parent.verticalCenter
-                        spacing: 1
-
-                        Repeater {
-                            model: ["previous", "toggle", "next"]
-
-                            Rectangle {
-                                required property string modelData
-
-                                width: modelData === "toggle" ? 28 : 23
-                                height: 28
-                                radius: 8
-                                color: mediaControlPointer.containsMouse
-                                    ? theme.surface2
-                                    : "transparent"
-                                opacity: {
-                                    if (!window.mediaPlayer) {
-                                        return 0.35
-                                    }
-                                    if (modelData === "previous") {
-                                        return window.mediaPlayer.canGoPrevious ? 1 : 0.35
-                                    }
-                                    if (modelData === "next") {
-                                        return window.mediaPlayer.canGoNext ? 1 : 0.35
-                                    }
-                                    return window.mediaPlayer.canTogglePlaying ? 1 : 0.35
-                                }
-
-                                Behavior on color { ColorAnimation { duration: 90 } }
-
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: parent.modelData === "previous"
-                                        ? "‹"
-                                        : (parent.modelData === "next"
-                                            ? "›"
-                                            : (window.mediaPlayer
-                                                && window.mediaPlayer.isPlaying ? "Ⅱ" : "▶"))
-                                    color: parent.modelData === "toggle"
-                                        ? theme.mauve
-                                        : theme.subtext
-                                    font.family: theme.fontFamily
-                                    font.pixelSize: parent.modelData === "toggle" ? 13 : 20
-                                    font.weight: Font.Normal
-                                }
-
-                                MouseArea {
-                                    id: mediaControlPointer
-                                    anchors.fill: parent
-                                    enabled: parent.opacity > 0.5
-                                    hoverEnabled: true
-                                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                                    onClicked: {
-                                        if (parent.modelData === "previous") {
-                                            window.previousMediaTrack()
-                                        } else if (parent.modelData === "next") {
-                                            window.nextMediaTrack()
-                                        } else {
-                                            window.toggleMediaPlayback()
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            } else if (source.toString().length > 0) {
+                audioUnloadTimer.restart()
             }
         }
 
-        Rectangle {
-            anchors.fill: parent
-            radius: parent.radius
-            color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.995)
-            visible: window.audioDeviceChooser.length > 0
-            z: 30
+        Component.onCompleted: syncSource()
 
-            Column {
-                anchors {
-                    fill: parent
-                    margins: 12
-                }
-                spacing: 8
-
-                Row {
-                    width: parent.width
-                    height: 34
-                    spacing: 8
-
-                    Rectangle {
-                        width: 32
-                        height: 32
-                        radius: 9
-                        color: chooserBackPointer.containsMouse
-                            ? theme.surface1
-                            : theme.surface0
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "‹"
-                            color: theme.text
-                            font.family: theme.fontFamily
-                            font.pixelSize: 22
-                        }
-
-                        MouseArea {
-                            id: chooserBackPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.audioDeviceChooser = ""
-                        }
-                    }
-
-                    Text {
-                        anchors.verticalCenter: parent.verticalCenter
-                        text: window.audioDeviceChooser === "source"
-                            ? "Choose a microphone"
-                            : "Choose an audio output"
-                        color: theme.text
-                        font.family: theme.fontFamily
-                        font.pixelSize: 13
-                        font.weight: Font.Normal
-                    }
-                }
-
-                ListView {
-                    id: audioDeviceList
-
-                    width: parent.width
-                    height: parent.height - 42
-                    clip: true
-                    spacing: 4
-                    boundsBehavior: Flickable.StopAtBounds
-                    model: window.audioDeviceChooser === "source"
-                        ? window.audioSources
-                        : window.audioSinks
-
-                    delegate: Rectangle {
-                        id: deviceChoice
-
-                        required property var modelData
-                        required property int index
-                        readonly property bool selected:
-                            window.audioDeviceChooser === "source"
-                                ? modelData === window.microphoneSource
-                                : modelData === window.audioSink
-
-                        width: audioDeviceList.width
-                        height: 48
-                        radius: 10
-                        color: deviceChoicePointer.containsMouse
-                            ? theme.surface1
-                            : (selected
-                                ? Qt.rgba(theme.mauve.r, theme.mauve.g, theme.mauve.b, 0.14)
-                                : theme.surface0)
-                        border.width: selected ? 1 : 0
-                        border.color: theme.mauve
-
-                        Behavior on color { ColorAnimation { duration: 90 } }
-
-                        Rectangle {
-                            anchors {
-                                left: parent.left
-                                leftMargin: 11
-                                verticalCenter: parent.verticalCenter
-                            }
-                            width: 8
-                            height: 8
-                            radius: 4
-                            color: parent.selected ? theme.mauve : theme.overlay
-                        }
-
-                        Text {
-                            anchors {
-                                left: parent.left
-                                leftMargin: 29
-                                right: parent.right
-                                rightMargin: 10
-                                verticalCenter: parent.verticalCenter
-                            }
-                            text: modelData.description || modelData.nickname
-                                || modelData.name || "Audio device"
-                            color: selected ? theme.text : theme.subtext
-                            elide: Text.ElideRight
-                            font.family: theme.fontFamily
-                            font.pixelSize: 11
-                            font.weight: Font.Normal
-                        }
-
-                        MouseArea {
-                            id: deviceChoicePointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.selectAudioDevice(deviceChoice.modelData)
-                        }
-                    }
-                }
-            }
+        Connections {
+            target: window
+            function onAudioOpenChanged() { audioPopupLoader.syncSource() }
         }
-                }
-            }
+
+        Timer {
+            id: audioUnloadTimer
+            interval: 190
+            onTriggered: audioPopupLoader.source = ""
         }
     }
 
@@ -3739,70 +2191,42 @@ PanelWindow {
         }
     }
 
-    Rectangle {
-        id: searchResults
+    Loader {
+        id: searchPopupLoader
+        anchors.fill: parent
+        z: 17
 
-        x: bar.x + 7
-        y: bar.y - 8 - height
-        width: searchBox.width
-        height: window.resultsHeight
-        radius: theme.radius
-        color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.98)
-        border.width: 1
-        border.color: Qt.rgba(theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.78)
-        opacity: window.searchOpen ? 1 : 0
-        scale: window.searchOpen ? 1 : 0.97
-        transformOrigin: Item.Bottom
-        visible: opacity > 0
-        clip: true
-
-        Behavior on opacity {
-            NumberAnimation { duration: 150; easing.type: Easing.OutCubic }
-        }
-
-        Behavior on scale {
-            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
-        }
-
-        Text {
-            anchors.centerIn: parent
-            visible: resultsList.count === 0
-            text: window.searchQuery.trim().length < 2
-                ? "Type at least 2 characters to search files"
-                : "No results found"
-            color: theme.overlay
-            font.family: theme.fontFamily
-            font.pixelSize: 12
-        }
-
-        ListView {
-            id: resultsList
-
-            anchors {
-                fill: parent
-                margins: 7
-            }
-            visible: count > 0
-            model: searchModel
-            clip: true
-            spacing: 1
-            currentIndex: -1
-            boundsBehavior: Flickable.StopAtBounds
-
-            delegate: SearchResult {
-                required property var modelData
-                required property int index
-
-                width: resultsList.width
-                entry: modelData
-                themeData: theme
-                selected: ListView.isCurrentItem
-
-                onHovered: resultsList.currentIndex = index
-                onActivated: function(entry) {
-                    window.launchEntry(entry)
+        function syncSource() {
+            if (window.searchOpen) {
+                searchUnloadTimer.stop()
+                if (source.toString().length === 0) {
+                    setSource(Qt.resolvedUrl("SearchPopup.qml"), {
+                        "host": window,
+                        "themeData": theme,
+                        "barItem": bar,
+                        "searchBoxItem": searchBox
+                    })
                 }
+            } else if (source.toString().length > 0) {
+                searchUnloadTimer.restart()
             }
+        }
+
+        function resetSelection() { if (item) item.resetSelection() }
+        function moveSelection(step) { if (item) item.moveSelection(step) }
+        function activateSelected() { if (item) item.activateSelected() }
+
+        Component.onCompleted: syncSource()
+
+        Connections {
+            target: window
+            function onSearchOpenChanged() { searchPopupLoader.syncSource() }
+        }
+
+        Timer {
+            id: searchUnloadTimer
+            interval: 190
+            onTriggered: searchPopupLoader.source = ""
         }
     }
 

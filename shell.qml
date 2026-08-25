@@ -24,6 +24,7 @@ ShellRoot {
 
     X11FullscreenTracker { id: windowState }
     PinnedState { id: pinnedApps }
+    QuickActionState { id: quickActions }
     NotificationState { id: notifications }
     UserConfig { id: userConfig }
 
@@ -43,6 +44,7 @@ ShellRoot {
             clockSource: clock
             windowTracker: windowState
             pinnedState: pinnedApps
+            quickActionState: quickActions
             notificationState: notifications
             configuration: userConfig
             // Desktop and restored windows keep the bar pinned. Snapped,

@@ -52,7 +52,7 @@ var pinned = [
     {
         name: "Thunderbird",
         pinKey: "net.thunderbird.Thunderbird.desktop",
-        wmClasses: ["thunderbird"],
+        wmClasses: ["thunderbird", "mail", "net.thunderbird.Thunderbird"],
         contextActions: [
             { label: "New message", command: ["thunderbird", "-compose"] }
         ],

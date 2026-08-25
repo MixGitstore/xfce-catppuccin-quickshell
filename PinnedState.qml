@@ -39,6 +39,32 @@ QtObject {
         })
     }
 
+    function place(record, targetIndex) {
+        const key = recordKey(record)
+        if (key.length === 0) {
+            return
+        }
+
+        const wanted = key.toLowerCase()
+        const nextPins = []
+        let placedRecord = record
+        for (let index = 0; index < pins.length; ++index) {
+            if (recordKey(pins[index]).toLowerCase() === wanted) {
+                placedRecord = pins[index]
+            } else {
+                nextPins.push(pins[index])
+            }
+        }
+
+        let destination = Math.round(Number(targetIndex))
+        if (isNaN(destination)) {
+            destination = nextPins.length
+        }
+        destination = Math.max(0, Math.min(destination, nextPins.length))
+        nextPins.splice(destination, 0, placedRecord)
+        adapter.pins = nextPins
+    }
+
     property FileView storage: FileView {
         path: Quickshell.shellDir + "/pinned-apps.json"
         preload: true

@@ -1,0 +1,9 @@
+{
+    "order": [
+        "audio",
+        "screenshot",
+        "clipboard",
+        "desktop",
+        "status"
+    ]
+}

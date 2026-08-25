@@ -6,6 +6,7 @@ rm -f \
     "$config_home/autostart/nm-applet.desktop" \
     "$config_home/autostart/xfce4-notifyd.desktop"
 
+systemctl --user unmask xfce4-notifyd.service 2>/dev/null || true
 systemctl --user start xfce4-notifyd.service 2>/dev/null || \
     /usr/lib64/xfce4/notifyd/xfce4-notifyd >/dev/null 2>&1 &
 
