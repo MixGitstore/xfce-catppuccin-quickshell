@@ -1,5 +1,6 @@
 import QtQuick
 import Quickshell
+import Quickshell.Io
 import Quickshell.Services.Mpris
 import Quickshell.Services.Pipewire
 import Quickshell.Widgets
@@ -21,6 +22,22 @@ Item {
     }
 
     property string audioDeviceChooser: ""
+    property bool routeViewOpen: false
+    property string routePage: "streams"
+    property var routeStreams: []
+    property var routeSinks: []
+    property var selectedRouteStream: null
+    property string routingStatus: ""
+    property string routingError: ""
+    property var pendingRouteSink: null
+    readonly property var defaultRouteChoice: ({
+        isDefaultChoice: true,
+        index: -1,
+        name: host.audioSink ? String(host.audioSink.name || "") : "",
+        description: "Default output"
+    })
+    readonly property var routeOutputChoices:
+        [defaultRouteChoice].concat(routeSinks)
     readonly property var pipewireNodes: Pipewire.nodes.values
     readonly property var audioSinks: pipewireNodes.filter(function(node) {
         return node && node.audio && node.isSink && !node.isStream
@@ -53,10 +70,14 @@ Item {
     readonly property var mediaPlayers: Mpris.players.values
     readonly property var mediaPlayer: {
         for (let index = 0; index < mediaPlayers.length; ++index) {
-            if (mediaPlayers[index].isPlaying) return mediaPlayers[index]
+            if (mediaPlayers[index].isPlaying) {
+                return mediaPlayers[index]
+            }
         }
         for (let index = 0; index < mediaPlayers.length; ++index) {
-            if (mediaPlayers[index].trackTitle) return mediaPlayers[index]
+            if (mediaPlayers[index].trackTitle) {
+                return mediaPlayers[index]
+            }
         }
         return mediaPlayers.length > 0 ? mediaPlayers[0] : null
     }
@@ -66,9 +87,9 @@ Item {
         ? (mediaPlayer.trackTitle || mediaPlayer.identity || "Media playback")
         : (audioStreams.length > 0
             ? (audioStreams[0].description || audioStreams[0].name || "Audio stream")
-            : "Nothing is playing")
+            : "Nothing playing")
     readonly property string mediaSubtitle: mediaPlayer
-        ? (mediaPlayer.trackArtist || mediaPlayer.identity || "Media player")
+        ? (mediaPlayer.trackArtist || mediaPlayer.identity || "Player media")
         : (audioStreams.length > 0 ? "Active audio stream" : "")
 
     function setMicrophoneVolume(value) {
@@ -78,15 +99,20 @@ Item {
     }
 
     function toggleMicrophoneMute() {
-        if (microphoneAvailable) microphoneControl.muted = !microphoneControl.muted
+        if (microphoneAvailable) {
+            microphoneControl.muted = !microphoneControl.muted
+        }
     }
 
     function openAudioDeviceChooser(kind) {
+        routeViewOpen = false
         audioDeviceChooser = kind === "source" ? "source" : "sink"
     }
 
     function selectAudioDevice(node) {
-        if (!node) return
+        if (!node) {
+            return
+        }
         if (audioDeviceChooser === "source") {
             Pipewire.preferredDefaultAudioSource = node
         } else {
@@ -96,17 +122,191 @@ Item {
     }
 
     function toggleMediaPlayback() {
-        if (mediaPlayer && mediaPlayer.canTogglePlaying) mediaPlayer.togglePlaying()
+        if (mediaPlayer && mediaPlayer.canTogglePlaying) {
+            mediaPlayer.togglePlaying()
+        }
     }
 
     function previousMediaTrack() {
-        if (mediaPlayer && mediaPlayer.canGoPrevious) mediaPlayer.previous()
+        if (mediaPlayer && mediaPlayer.canGoPrevious) {
+            mediaPlayer.previous()
+        }
     }
 
     function nextMediaTrack() {
-        if (mediaPlayer && mediaPlayer.canGoNext) mediaPlayer.next()
+        if (mediaPlayer && mediaPlayer.canGoNext) {
+            mediaPlayer.next()
+        }
     }
 
+    function streamProperty(properties, key, fallback) {
+        if (properties && properties[key] !== undefined
+                && String(properties[key]).length > 0) {
+            return String(properties[key])
+        }
+        return fallback || ""
+    }
+
+    function streamLabel(stream) {
+        const properties = stream.properties || ({})
+        return streamProperty(properties, "application.name",
+            streamProperty(properties, "application.process.binary", "Audio stream"))
+    }
+
+    function streamSubtitle(stream) {
+        const properties = stream.properties || ({})
+        let mediaName = streamProperty(properties, "media.name", "")
+        if (mediaName === "AudioStream" || mediaName === "Playback"
+                || mediaName === streamLabel(stream)) {
+            mediaName = ""
+        }
+        const output = sinkDescription(stream.sink)
+        return (stream.corked ? "Paused · " : "")
+            + (mediaName ? mediaName + " · " : "")
+            + (output || "Unknown output")
+    }
+
+    function sinkDescription(index) {
+        for (let sinkIndex = 0; sinkIndex < routeSinks.length; ++sinkIndex) {
+            if (Number(routeSinks[sinkIndex].index) === Number(index)) {
+                return routeSinks[sinkIndex].description
+                    || routeSinks[sinkIndex].name || "Audio output"
+            }
+        }
+        return ""
+    }
+
+    function parseRouteSinks(output) {
+        try {
+            const parsed = JSON.parse(String(output || "[]"))
+            routeSinks = Array.isArray(parsed) ? parsed : []
+            routingError = ""
+        } catch (error) {
+            routeSinks = []
+            routingError = "Could not read audio outputs"
+        }
+    }
+
+    function parseRouteStreams(output) {
+        try {
+            const parsed = JSON.parse(String(output || "[]"))
+            routeStreams = Array.isArray(parsed) ? parsed : []
+            routingStatus = routeStreams.length > 0
+                ? routeStreams.length + (routeStreams.length === 1
+                    ? " active audio stream" : " active audio streams")
+                : "No active audio streams"
+            routingError = ""
+        } catch (error) {
+            routeStreams = []
+            routingError = "Could not read audio streams"
+        }
+    }
+
+    function refreshRouting() {
+        routingError = ""
+        routingStatus = "Refreshing…"
+        if (!routeSinkQuery.running) {
+            routeSinkQuery.exec(["pactl", "-f", "json", "list", "sinks"])
+        }
+        if (!routeStreamQuery.running) {
+            routeStreamQuery.exec([
+                "pactl", "-f", "json", "list", "sink-inputs"
+            ])
+        }
+    }
+
+    function openStreamRouter() {
+        audioDeviceChooser = ""
+        routePage = "streams"
+        selectedRouteStream = null
+        routeViewOpen = true
+        refreshRouting()
+    }
+
+    function chooseStream(stream) {
+        selectedRouteStream = stream
+        routePage = "outputs"
+    }
+
+    function routeSelectedStream(sink) {
+        if (!selectedRouteStream || !sink || routeMoveProcess.running) {
+            return
+        }
+        let actualSink = sink
+        if (sink.isDefaultChoice) {
+            actualSink = null
+            for (let index = 0; index < routeSinks.length; ++index) {
+                if (routeSinks[index].name === sink.name) {
+                    actualSink = routeSinks[index]
+                    break
+                }
+            }
+        }
+        if (!actualSink || !actualSink.name) {
+            routingError = "The default output is unavailable"
+            return
+        }
+        pendingRouteSink = sink
+        routingError = ""
+        routingStatus = "Moving stream…"
+        routeMoveProcess.exec([
+            "pactl", "move-sink-input", String(selectedRouteStream.index),
+            String(actualSink.name)
+        ])
+    }
+
+    Process {
+        id: routeSinkQuery
+
+        stdout: StdioCollector {
+            onStreamFinished: root.parseRouteSinks(text)
+        }
+    }
+
+    Process {
+        id: routeStreamQuery
+
+        stdout: StdioCollector {
+            onStreamFinished: root.parseRouteStreams(text)
+        }
+    }
+
+    Process {
+        id: routeMoveProcess
+
+        stderr: StdioCollector {
+            onStreamFinished: root.routingError = String(text || "").trim()
+        }
+
+        onExited: function(exitCode, exitStatus) {
+            if (exitCode === 0) {
+                if (root.pendingRouteSink && root.pendingRouteSink.isDefaultChoice) {
+                    host.audioRouteState.forgetRoute(root.selectedRouteStream)
+                    root.routingStatus = "The stream follows the default output"
+                } else if (root.pendingRouteSink) {
+                    host.audioRouteState.rememberRoute(
+                        root.selectedRouteStream, root.pendingRouteSink)
+                    root.routingStatus = "Stream moved and remembered on "
+                        + (root.pendingRouteSink.description
+                            || root.pendingRouteSink.name)
+                }
+                root.routePage = "streams"
+                root.selectedRouteStream = null
+                routeRefreshDelay.restart()
+            } else if (!root.routingError) {
+                root.routingError = "Failed to move the audio stream"
+            }
+            root.pendingRouteSink = null
+        }
+    }
+
+    Timer {
+        id: routeRefreshDelay
+        interval: 350
+        onTriggered: root.refreshRouting()
+    }
+
+    // All devices and streams are tracked only while this component exists.
     PwObjectTracker {
         objects: root.pipewireNodes
     }
@@ -340,7 +540,7 @@ Row {
 
         Text {
             anchors.centerIn: parent
-            text: "Audio mixer"
+            text: "Route audio"
             color: themeData.subtext
             font.family: themeData.fontFamily
             font.pixelSize: 11
@@ -352,10 +552,7 @@ Row {
             anchors.fill: parent
             hoverEnabled: true
             cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                host.closeAudio()
-                Quickshell.execDetached(["pavucontrol"])
-            }
+            onClicked: root.openStreamRouter()
         }
     }
 }
@@ -375,8 +572,10 @@ Row {
         anchors.verticalCenter: parent.verticalCenter
         implicitSize: 22
         source: root.microphoneMuted
-            ? host.assetIconDirectory + "catppuccin-microphone-muted.svg"
-            : host.assetIconDirectory + "catppuccin-microphone.svg"
+            ? "file://" + Quickshell.shellDir
+                + "/assets/icons/catppuccin-microphone-muted.svg"
+            : "file://" + Quickshell.shellDir
+                + "/assets/icons/catppuccin-microphone.svg"
         mipmap: true
         opacity: root.microphoneAvailable ? 1 : 0.45
 
@@ -537,7 +736,8 @@ Rectangle {
         IconImage {
             anchors.verticalCenter: parent.verticalCenter
             implicitSize: 23
-            source: host.assetIconDirectory + "catppuccin-media.svg"
+            source: "file://" + Quickshell.shellDir
+                + "/assets/icons/catppuccin-media.svg"
             mipmap: true
             opacity: root.mediaAvailable ? 1 : 0.42
         }
@@ -774,6 +974,325 @@ Column {
         }
     }
 }
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: parent.radius
+            color: Qt.rgba(themeData.base.r, themeData.base.g,
+                themeData.base.b, 0.995)
+            visible: root.routeViewOpen
+            z: 31
+
+            Column {
+                anchors {
+                    fill: parent
+                    margins: 12
+                }
+                spacing: 7
+
+                Row {
+                    width: parent.width
+                    height: 34
+                    spacing: 7
+
+                    Rectangle {
+                        width: 32
+                        height: 32
+                        radius: 9
+                        color: routeBackPointer.containsMouse
+                            ? themeData.surface1 : themeData.surface0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "‹"
+                            color: themeData.text
+                            font.family: themeData.fontFamily
+                            font.pixelSize: 22
+                        }
+
+                        MouseArea {
+                            id: routeBackPointer
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                if (root.routePage === "outputs") {
+                                    root.routePage = "streams"
+                                    root.selectedRouteStream = null
+                                } else {
+                                    root.routeViewOpen = false
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: 103
+                        text: root.routePage === "outputs"
+                            ? "Choose output" : "Audio routing"
+                        color: themeData.text
+                        elide: Text.ElideRight
+                        font.family: themeData.fontFamily
+                        font.pixelSize: 12
+                        font.weight: Font.DemiBold
+                    }
+
+                    Rectangle {
+                        width: 32
+                        height: 32
+                        radius: 9
+                        visible: root.routePage === "streams"
+                        color: routeRefreshPointer.containsMouse
+                            ? themeData.surface1 : themeData.surface0
+                        opacity: routeSinkQuery.running || routeStreamQuery.running
+                            ? 0.5 : 1
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "↻"
+                            color: themeData.lavender
+                            font.family: themeData.fontFamily
+                            font.pixelSize: 15
+                        }
+
+                        MouseArea {
+                            id: routeRefreshPointer
+                            anchors.fill: parent
+                            enabled: !routeSinkQuery.running && !routeStreamQuery.running
+                            hoverEnabled: true
+                            cursorShape: enabled
+                                ? Qt.PointingHandCursor : Qt.ArrowCursor
+                            onClicked: root.refreshRouting()
+                        }
+                    }
+
+                    Item {
+                        width: root.routePage === "streams" ? 0 : 32
+                        height: 1
+                    }
+
+                    Rectangle {
+                        width: 55
+                        height: 32
+                        radius: 9
+                        color: fullMixerPointer.containsMouse
+                            ? themeData.surface1 : themeData.surface0
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: "Mixer"
+                            color: themeData.subtext
+                            font.family: themeData.fontFamily
+                            font.pixelSize: 9
+                        }
+
+                        MouseArea {
+                            id: fullMixerPointer
+                            anchors.fill: parent
+                            hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                host.closeAudio()
+                                Quickshell.execDetached(["pavucontrol"])
+                            }
+                        }
+                    }
+                }
+
+                Text {
+                    width: parent.width
+                    height: 24
+                    text: root.routingError
+                        ? root.routingError
+                        : (root.routePage === "outputs" && root.selectedRouteStream
+                            ? "Move “" + root.streamLabel(root.selectedRouteStream)
+                                + "” to:"
+                            : root.routingStatus)
+                    color: root.routingError ? themeData.red : themeData.overlay
+                    elide: Text.ElideRight
+                    verticalAlignment: Text.AlignVCenter
+                    font.family: themeData.fontFamily
+                    font.pixelSize: 9
+                }
+
+                Item {
+                    width: parent.width
+                    height: parent.height - 72
+
+                    ListView {
+                        id: routeList
+                        anchors.fill: parent
+                        clip: true
+                        spacing: 5
+                        boundsBehavior: Flickable.StopAtBounds
+                        model: root.routePage === "outputs"
+                            ? root.routeOutputChoices : root.routeStreams
+
+                        delegate: Rectangle {
+                            id: routeChoice
+
+                            required property var modelData
+                            required property int index
+                            readonly property bool outputChoice:
+                                root.routePage === "outputs"
+                            readonly property var rememberedRule: outputChoice
+                                && root.selectedRouteStream
+                                ? host.audioRouteState.ruleForStream(
+                                    root.selectedRouteStream) : null
+                            readonly property bool selected: outputChoice
+                                && (modelData.isDefaultChoice
+                                    ? rememberedRule === null
+                                    : rememberedRule !== null
+                                        && rememberedRule.sinkName === modelData.name)
+                            readonly property bool currentOutput: outputChoice
+                                && !modelData.isDefaultChoice
+                                && root.selectedRouteStream
+                                && Number(root.selectedRouteStream.sink)
+                                    === Number(modelData.index)
+
+                            width: routeList.width
+                            height: 54
+                            radius: 10
+                            color: routeChoicePointer.containsMouse
+                                ? themeData.surface1
+                                : (selected
+                                    ? Qt.rgba(themeData.mauve.r,
+                                        themeData.mauve.g,
+                                        themeData.mauve.b, 0.15)
+                                    : themeData.surface0)
+                            border.width: selected ? 1 : 0
+                            border.color: themeData.mauve
+
+                            Behavior on color { ColorAnimation { duration: 90 } }
+
+                            Rectangle {
+                                anchors {
+                                    left: parent.left
+                                    leftMargin: 9
+                                    verticalCenter: parent.verticalCenter
+                                }
+                                width: 31
+                                height: 31
+                                radius: 10
+                                color: parent.selected
+                                    ? Qt.rgba(themeData.mauve.r,
+                                        themeData.mauve.g,
+                                        themeData.mauve.b, 0.24)
+                                    : themeData.mantle
+
+                                Text {
+                                    anchors.centerIn: parent
+                                    text: routeChoice.outputChoice
+                                        ? (routeChoice.modelData.isDefaultChoice
+                                            ? "󰋋" : "󰓃")
+                                        : root.streamLabel(routeChoice.modelData)
+                                            .slice(0, 1).toUpperCase()
+                                    color: routeChoice.selected
+                                        ? themeData.mauve : themeData.lavender
+                                    font.family: themeData.fontFamily
+                                    font.pixelSize: routeChoice.outputChoice ? 14 : 11
+                                    font.weight: Font.DemiBold
+                                }
+                            }
+
+                            Column {
+                                anchors {
+                                    left: parent.left
+                                    right: routeArrow.left
+                                    leftMargin: 49
+                                    rightMargin: 7
+                                    verticalCenter: parent.verticalCenter
+                                }
+                                spacing: 2
+
+                                Text {
+                                    width: parent.width
+                                    text: routeChoice.outputChoice
+                                        ? (routeChoice.modelData.description
+                                            || routeChoice.modelData.name
+                                            || "Audio output")
+                                        : root.streamLabel(routeChoice.modelData)
+                                            + "  #" + routeChoice.modelData.index
+                                    color: routeChoice.selected
+                                        ? themeData.text : themeData.subtext
+                                    elide: Text.ElideRight
+                                    font.family: themeData.fontFamily
+                                    font.pixelSize: 10
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Text {
+                                    width: parent.width
+                                    text: routeChoice.outputChoice
+                                        ? (routeChoice.modelData.isDefaultChoice
+                                            ? (routeChoice.selected
+                                                ? "No fixed rule"
+                                                : "Remove remembered rule")
+                                            : (routeChoice.currentOutput
+                                                ? (routeChoice.selected
+                                                    ? "Remembered · current output"
+                                                    : "Current output")
+                                                : (routeChoice.selected
+                                                    ? "Remembered for this stream"
+                                                    : "Move and remember")))
+                                        : root.streamSubtitle(routeChoice.modelData)
+                                    color: routeChoice.selected
+                                        ? themeData.green : themeData.overlay
+                                    elide: Text.ElideRight
+                                    font.family: themeData.fontFamily
+                                    font.pixelSize: 8
+                                }
+                            }
+
+                            Text {
+                                id: routeArrow
+                                anchors {
+                                    right: parent.right
+                                    rightMargin: 11
+                                    verticalCenter: parent.verticalCenter
+                                }
+                                text: routeChoice.selected ? "✓" : "›"
+                                color: routeChoice.selected
+                                    ? themeData.green : themeData.mauve
+                                font.family: themeData.fontFamily
+                                font.pixelSize: routeChoice.selected ? 11 : 17
+                            }
+
+                            MouseArea {
+                                id: routeChoicePointer
+                                anchors.fill: parent
+                                enabled: !routeMoveProcess.running
+                                hoverEnabled: true
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: {
+                                    if (routeChoice.outputChoice) {
+                                        root.routeSelectedStream(routeChoice.modelData)
+                                    } else {
+                                        root.chooseStream(routeChoice.modelData)
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Text {
+                        anchors.centerIn: parent
+                        visible: routeList.count === 0
+                            && !routeSinkQuery.running && !routeStreamQuery.running
+                        width: parent.width - 28
+                        horizontalAlignment: Text.AlignHCenter
+                        wrapMode: Text.WordWrap
+                        text: root.routePage === "outputs"
+                            ? "No audio outputs are available."
+                            : "Start an audio source, then press ↻ to refresh."
+                        color: themeData.overlay
+                        font.family: themeData.fontFamily
+                        font.pixelSize: 10
+                    }
+                }
+            }
         }
     }
 }

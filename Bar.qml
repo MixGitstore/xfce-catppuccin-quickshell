@@ -15,6 +15,8 @@ PanelWindow {
     required property var quickActionState
     required property var notificationState
     required property var configuration
+    required property var displayState
+    required property var audioRouteState
     property bool pinnedOpen: false
     property bool searchOpen: false
     property bool audioOpen: false
@@ -23,6 +25,7 @@ PanelWindow {
     property bool clipboardOpen: false
     property bool networkOpen: false
     property bool notificationsOpen: false
+    property bool displayOpen: false
     property bool taskbarReordering: false
     property var audioAnchorItem: null
     property var notificationToast: null
@@ -71,11 +74,23 @@ PanelWindow {
     readonly property int clipboardPopupHeight: 332
     readonly property int networkPopupHeight: 390
     readonly property int notificationsPopupHeight: 390
+    readonly property int displayPopupHeight: 410
+    readonly property int popupSurfaceHeight: Math.max(
+        resultsHeight, audioPopupHeight, systemPopupHeight,
+        calendarPopupHeight, clipboardPopupHeight, networkPopupHeight,
+        notificationsPopupHeight, displayPopupHeight)
     readonly property bool fullscreenLocked: windowTracker.fullscreenActive
+    readonly property bool popupRequested: !fullscreenLocked
+        && (searchOpen || contextMenuOpen || audioOpen || systemOpen
+            || calendarOpen || clipboardOpen || networkOpen
+            || notificationsOpen || displayOpen || notificationToast !== null)
+    property bool popupSurfaceActive: false
+    readonly property real popupSearchBoxWidth: searchBox.width
+    property real popupAudioAnchorCenterX: width - theme.sideMargin
     readonly property bool expanded: !fullscreenLocked
         && (pinnedOpen || searchOpen || contextMenuOpen
             || audioOpen || systemOpen || calendarOpen || clipboardOpen
-            || networkOpen || notificationsOpen
+            || networkOpen || notificationsOpen || displayOpen
             || taskbarReordering || barHover.hovered || hideDelay.running)
     readonly property var calendarMonthNames: [
         "January", "February", "March", "April", "May", "June",
@@ -111,7 +126,6 @@ PanelWindow {
         }
         return base + "catppuccin-volume-high.svg"
     }
-
     readonly property string audioDescription: audioSink
         ? (audioSink.description || audioSink.nickname || audioSink.name || "Audio output")
         : "No audio device"
@@ -287,6 +301,22 @@ PanelWindow {
             window.openNotifications()
         }
 
+        function openDisplay(): void {
+            window.openDisplay()
+        }
+
+        function nightLightOn(): void {
+            window.displayState.setNightLight(true)
+        }
+
+        function nightLightOff(): void {
+            window.displayState.setNightLight(false)
+        }
+
+        function nightLightAuto(): void {
+            window.displayState.setAutomatic(true)
+        }
+
         function clearNotifications(): void {
             window.notificationToast = null
             window.notificationState.clearAll()
@@ -311,6 +341,7 @@ PanelWindow {
         function closePopups(): void {
             window.closeNetwork()
             window.closeNotifications()
+            window.closeDisplay()
             window.closeClipboard()
             window.closeCalendar()
             window.closeAudio()
@@ -361,7 +392,7 @@ PanelWindow {
         items.push({
             kind: "launch",
             label: contextWindowId.length > 0
-                ? "Launch again"
+                ? "Launch another instance"
                 : "Open application",
             command: contextApp.command,
             sectionBreak: contextWindowId.length > 0
@@ -378,8 +409,8 @@ PanelWindow {
         items.push({
             kind: "pin",
             label: pinnedState.isPinned(contextApp.pinKey)
-                ? "Remove from bar"
-                : "Pin to bar",
+                ? "Unpin from taskbar"
+                : "Pin to taskbar",
             sectionBreak: true
         })
         return items
@@ -708,13 +739,12 @@ PanelWindow {
 
     function compactDateLabel(date) {
         return calendarWeekdayNamesLong[date.getDay()].substring(0, 3)
-            + ", " + calendarMonthNamesShort[date.getMonth()] + " " + date.getDate()
+            + ", " + date.getDate() + " " + calendarMonthNamesShort[date.getMonth()]
     }
 
     function longDateLabel(date) {
-        return calendarWeekdayNamesLong[date.getDay()] + ", "
-            + calendarMonthNames[date.getMonth()] + " " + date.getDate()
-            + ", " + date.getFullYear()
+        return calendarWeekdayNamesLong[date.getDay()] + ", " + date.getDate()
+            + " " + calendarMonthNames[date.getMonth()] + " " + date.getFullYear()
     }
 
     function shiftCalendarMonth(offset) {
@@ -822,6 +852,7 @@ PanelWindow {
     function openClipboard() {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeCalendar()
         closeAudio()
         closeSystem()
@@ -845,6 +876,7 @@ PanelWindow {
     function openCalendar() {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeAudio()
         closeSystem()
@@ -870,6 +902,7 @@ PanelWindow {
     function openSearch() {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -879,8 +912,26 @@ PanelWindow {
         searchQuery = ""
         Qt.callLater(function() {
             searchInput.forceActiveFocus()
-            searchPopupLoader.resetSelection()
+            window.resetSearchPopupSelection()
         })
+    }
+
+    function resetSearchPopupSelection() {
+        if (popupSurfaceLoader.item) {
+            popupSurfaceLoader.item.resetSearchSelection()
+        }
+    }
+
+    function moveSearchPopupSelection(step) {
+        if (popupSurfaceLoader.item) {
+            popupSurfaceLoader.item.moveSearchSelection(step)
+        }
+    }
+
+    function activateSearchPopupSelection() {
+        if (popupSurfaceLoader.item) {
+            popupSurfaceLoader.item.activateSearchSelection()
+        }
     }
 
     function closeSearch() {
@@ -901,12 +952,30 @@ PanelWindow {
     function openAudio() {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeSearch()
         closeSystem()
         closeContextMenu()
+        updateAudioPopupAnchor()
         audioOpen = true
+    }
+
+    function updateAudioPopupAnchor() {
+        if (!audioAnchorItem) {
+            popupAudioAnchorCenterX = width - theme.sideMargin
+            return
+        }
+
+        const point = audioAnchorItem.mapToItem(
+            window.contentItem,
+            audioAnchorItem.width / 2,
+            audioAnchorItem.height / 2)
+        const centerX = Number(point.x)
+        popupAudioAnchorCenterX = isFinite(centerX) && centerX > 0
+            ? centerX
+            : width - theme.sideMargin
     }
 
     function closeAudio() {
@@ -923,6 +992,7 @@ PanelWindow {
 
     function openNetwork() {
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -943,6 +1013,7 @@ PanelWindow {
 
     function openNotifications() {
         closeNetwork()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -960,6 +1031,27 @@ PanelWindow {
     function toggleNotifications() {
         if (notificationsOpen) closeNotifications()
         else openNotifications()
+    }
+
+    function openDisplay() {
+        closeNetwork()
+        closeNotifications()
+        closeClipboard()
+        closeCalendar()
+        closeAudio()
+        closeSystem()
+        closeSearch()
+        closeContextMenu()
+        displayOpen = true
+    }
+
+    function closeDisplay() {
+        displayOpen = false
+    }
+
+    function toggleDisplay() {
+        if (displayOpen) closeDisplay()
+        else openDisplay()
     }
 
     function formatBytes(bytes) {
@@ -1007,6 +1099,7 @@ PanelWindow {
     function openSystem() {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -1093,6 +1186,7 @@ PanelWindow {
     function activatePinnedApp(app, windowId, appIsActive) {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -1126,6 +1220,7 @@ PanelWindow {
     function openWindowChooser(app, appWindows, anchorX) {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -1143,6 +1238,7 @@ PanelWindow {
     function openContextMenu(app, windowId, appIsActive, anchorX) {
         closeNetwork()
         closeNotifications()
+        closeDisplay()
         closeClipboard()
         closeCalendar()
         closeAudio()
@@ -1164,7 +1260,9 @@ PanelWindow {
         contextAppActive = false
         contextWindows = []
         windowChooserMode = false
-        contextCloseDelay.stop()
+        if (popupSurfaceLoader.item) {
+            popupSurfaceLoader.item.stopContextCloseTimer()
+        }
     }
 
     function closeChooserWindow(windowId) {
@@ -1353,6 +1451,9 @@ PanelWindow {
     Component.onCompleted: {
         window.refreshWeather()
         window.captureClipboard(Quickshell.clipboardText)
+        if (window.popupRequested) {
+            window.popupSurfaceActive = true
+        }
     }
 
     Timer {
@@ -1368,14 +1469,10 @@ PanelWindow {
         right: true
     }
 
-    // Keep the native X11 window at a constant size. Resizing it every frame is
-    // noticeably choppy; only the bar content moves now.
-    // Keep the native X11 surface at one constant size. X11 keeps the input
-    // shape from the initial surface when a panel is resized dynamically.
+    // The permanent X11 surface now contains only the bar. Popup content lives
+    // in a separate window created on demand, so the large graphics surface is
+    // absent while the panel is idle.
     implicitHeight: theme.barHeight + theme.topMargin + 8
-        + Math.max(resultsHeight, audioPopupHeight, systemPopupHeight,
-            calendarPopupHeight, clipboardPopupHeight, networkPopupHeight,
-            notificationsPopupHeight)
     color: "transparent"
     surfaceFormat.opaque: false
     // Fullscreen video and games must not retain even a one-pixel X11 surface
@@ -1386,27 +1483,11 @@ PanelWindow {
     // The window must already be focusable when the opening click arrives;
     // changing this only afterwards is too late for reliable keyboard focus on X11.
     focusable: true
-    // On X11 an item-backed mask does not reliably grow with the search window.
-    // Use the full native input surface while results are open, then restore the
-    // narrow autohide mask when search closes.
-    mask: fullscreenLocked
-        ? compactInputMask
-        : (searchOpen || contextMenuOpen || audioOpen || systemOpen || calendarOpen
-            || clipboardOpen || networkOpen || notificationsOpen || notificationToast
-            ? expandedInputMask
-            : compactInputMask)
+    mask: compactInputMask
 
     Region {
         id: compactInputMask
         item: inputRegion
-    }
-
-    Region {
-        id: expandedInputMask
-        x: 0
-        y: 0
-        width: window.width
-        height: window.height
     }
 
     // The bar floats above windows; maximized, snapped and fullscreen windows
@@ -1439,6 +1520,7 @@ PanelWindow {
             // becomes maximized, snapped or fullscreen.
             closeNetwork()
             closeNotifications()
+            closeDisplay()
             closeClipboard()
             closeCalendar()
             closeAudio()
@@ -1450,6 +1532,15 @@ PanelWindow {
             if (!barHover.hovered) {
                 hideDelay.restart()
             }
+        }
+    }
+
+    onPopupRequestedChanged: {
+        if (popupRequested) {
+            popupSurfaceUnloadTimer.stop()
+            popupSurfaceActive = true
+        } else if (popupSurfaceActive) {
+            popupSurfaceUnloadTimer.restart()
         }
     }
 
@@ -1474,14 +1565,9 @@ PanelWindow {
         width: Math.max(0, window.width - theme.sideMargin * 2)
         height: window.fullscreenLocked
             ? 0
-            : (window.searchOpen || window.contextMenuOpen
-                || window.audioOpen || window.systemOpen || window.calendarOpen
-                || window.clipboardOpen || window.networkOpen
-                || window.notificationsOpen || window.notificationToast
-                ? window.implicitHeight
-                : (window.expanded
-                    ? theme.barHeight + theme.topMargin
-                    : theme.hiddenHeight))
+            : (window.expanded
+                ? theme.barHeight + theme.topMargin
+                : theme.hiddenHeight)
         y: window.height - height
     }
 
@@ -1614,7 +1700,7 @@ PanelWindow {
 
                         onTextChanged: {
                             window.searchQuery = text
-                            Qt.callLater(searchPopupLoader.resetSelection)
+                            Qt.callLater(window.resetSearchPopupSelection)
                         }
 
                         Keys.onPressed: function(event) {
@@ -1622,14 +1708,14 @@ PanelWindow {
                                 window.closeSearch()
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Down) {
-                                searchPopupLoader.moveSelection(1)
+                                window.moveSearchPopupSelection(1)
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Up) {
-                                searchPopupLoader.moveSelection(-1)
+                                window.moveSearchPopupSelection(-1)
                                 event.accepted = true
                             } else if (event.key === Qt.Key_Return
                                     || event.key === Qt.Key_Enter) {
-                                searchPopupLoader.activateSelected()
+                                window.activateSearchPopupSelection()
                                 event.accepted = true
                             }
                         }
@@ -1649,8 +1735,9 @@ PanelWindow {
                 border.color: theme.surface0
                 clip: true
 
-                // Animate the container around its center so taskbar growth and
-                // shrinkage remain visually balanced on both sides.
+                // Keep the taskbar centered while its background grows or shrinks.
+                // The row follows the animated inner width, so existing icons move
+                // by half an item instead of the new item appearing only on the right.
                 Behavior on width {
                     NumberAnimation {
                         duration: 180
@@ -1758,6 +1845,7 @@ PanelWindow {
                                 onInteracted: {
                                     window.closeNetwork()
                                     window.closeNotifications()
+                                    window.closeDisplay()
                                     window.closeClipboard()
                                     window.closeCalendar()
                                     window.closeAudio()
@@ -1848,14 +1936,18 @@ PanelWindow {
                             draggable: true
                             themeData: theme
                             glyph: window.networkOpen || window.notificationsOpen
+                                || window.displayOpen
                                 ? "" : ""
                             glyphColor: theme.lavender
                             open: window.networkOpen || window.notificationsOpen
+                                || window.displayOpen
                             count: window.notificationState.count
                             onActivated: {
-                                if (window.networkOpen || window.notificationsOpen) {
+                                if (window.networkOpen || window.notificationsOpen
+                                        || window.displayOpen) {
                                     window.closeNetwork()
                                     window.closeNotifications()
+                                    window.closeDisplay()
                                 } else {
                                     window.openNetwork()
                                 }
@@ -2005,457 +2097,20 @@ PanelWindow {
         }
     }
 
-    Loader {
-        id: clipboardPopupLoader
-        anchors.fill: parent
-        z: 18
+    LazyLoader {
+        id: popupSurfaceLoader
+        active: window.popupSurfaceActive
 
-        function syncSource() {
-            if (window.clipboardOpen) {
-                clipboardUnloadTimer.stop()
-                if (source.toString().length === 0) {
-                    setSource(Qt.resolvedUrl("ClipboardPopup.qml"), {
-                        "host": window,
-                        "themeData": theme,
-                        "barItem": bar
-                    })
-                }
-            } else if (source.toString().length > 0) {
-                clipboardUnloadTimer.restart()
-            }
-        }
-
-        Component.onCompleted: syncSource()
-
-        Connections {
-            target: window
-            function onClipboardOpenChanged() { clipboardPopupLoader.syncSource() }
-        }
-
-        Timer {
-            id: clipboardUnloadTimer
-            interval: 190
-            onTriggered: clipboardPopupLoader.source = ""
-        }
-    }
-
-    Loader {
-        id: calendarPopupLoader
-        anchors.fill: parent
-        z: 19
-
-        function syncSource() {
-            if (window.calendarOpen) {
-                calendarUnloadTimer.stop()
-                if (source.toString().length === 0) {
-                    setSource(Qt.resolvedUrl("CalendarPopup.qml"), {
-                        "host": window,
-                        "themeData": theme,
-                        "barItem": bar
-                    })
-                }
-            } else if (source.toString().length > 0) {
-                calendarUnloadTimer.restart()
-            }
-        }
-
-        Component.onCompleted: syncSource()
-
-        Connections {
-            target: window
-            function onCalendarOpenChanged() { calendarPopupLoader.syncSource() }
-        }
-
-        Timer {
-            id: calendarUnloadTimer
-            interval: 190
-            onTriggered: calendarPopupLoader.source = ""
-        }
-    }
-
-    Loader {
-        id: systemPopupLoader
-        anchors.fill: parent
-        z: 20
-
-        function syncSource() {
-            if (window.systemOpen) {
-                systemUnloadTimer.stop()
-                if (source.toString().length === 0) {
-                    setSource(Qt.resolvedUrl("SystemPopup.qml"), {
-                        "host": window,
-                        "themeData": theme,
-                        "barItem": bar
-                    })
-                }
-            } else if (source.toString().length > 0) {
-                systemUnloadTimer.restart()
-            }
-        }
-
-        Component.onCompleted: syncSource()
-
-        Connections {
-            target: window
-            function onSystemOpenChanged() { systemPopupLoader.syncSource() }
-        }
-
-        Timer {
-            id: systemUnloadTimer
-            interval: 190
-            onTriggered: systemPopupLoader.source = ""
-        }
-    }
-
-    Loader {
-        id: audioPopupLoader
-        anchors.fill: parent
-        z: 21
-
-        function syncSource() {
-            if (window.audioOpen) {
-                audioUnloadTimer.stop()
-                if (source.toString().length === 0) {
-                    setSource(Qt.resolvedUrl("AudioPopup.qml"), {
-                        "host": window,
-                        "themeData": theme,
-                        "barItem": bar,
-                        "anchorItem": window.audioAnchorItem
-                    })
-                }
-            } else if (source.toString().length > 0) {
-                audioUnloadTimer.restart()
-            }
-        }
-
-        Component.onCompleted: syncSource()
-
-        Connections {
-            target: window
-            function onAudioOpenChanged() { audioPopupLoader.syncSource() }
-        }
-
-        Timer {
-            id: audioUnloadTimer
-            interval: 190
-            onTriggered: audioPopupLoader.source = ""
-        }
-    }
-
-    Loader {
-        id: networkPopupLoader
-        anchors.fill: parent
-        active: window.networkOpen
-        z: 22
-
-        sourceComponent: Component {
-            NetworkPopup {
-                themeData: theme
-                barX: bar.x
-                barY: bar.y
-                barWidth: bar.width
-                onCloseRequested: window.closeNetwork()
-                onTabRequested: function(tab) {
-                    if (tab === "notifications") window.openNotifications()
-                }
-            }
-        }
-    }
-
-    Loader {
-        id: notificationsPopupLoader
-        anchors.fill: parent
-        active: window.notificationsOpen
-        z: 22
-
-        sourceComponent: Component {
-            NotificationPopup {
-                themeData: theme
-                notificationState: window.notificationState
-                barX: bar.x
-                barY: bar.y
-                barWidth: bar.width
-                onCloseRequested: window.closeNotifications()
-                onTabRequested: function(tab) {
-                    if (tab === "network") window.openNetwork()
-                }
-            }
-        }
-    }
-
-    Loader {
-        id: notificationToastLoader
-        anchors.fill: parent
-        active: window.notificationToast !== null
-        z: 40
-
-        sourceComponent: Component {
-            NotificationToast {
-                notification: window.notificationToast
-                themeData: theme
-                barX: bar.x
-                barY: bar.y
-                barWidth: bar.width
-                onFinished: window.notificationToast = null
-            }
-        }
-    }
-
-    Loader {
-        id: searchPopupLoader
-        anchors.fill: parent
-        z: 17
-
-        function syncSource() {
-            if (window.searchOpen) {
-                searchUnloadTimer.stop()
-                if (source.toString().length === 0) {
-                    setSource(Qt.resolvedUrl("SearchPopup.qml"), {
-                        "host": window,
-                        "themeData": theme,
-                        "barItem": bar,
-                        "searchBoxItem": searchBox
-                    })
-                }
-            } else if (source.toString().length > 0) {
-                searchUnloadTimer.restart()
-            }
-        }
-
-        function resetSelection() { if (item) item.resetSelection() }
-        function moveSelection(step) { if (item) item.moveSelection(step) }
-        function activateSelected() { if (item) item.activateSelected() }
-
-        Component.onCompleted: syncSource()
-
-        Connections {
-            target: window
-            function onSearchOpenChanged() { searchPopupLoader.syncSource() }
-        }
-
-        Timer {
-            id: searchUnloadTimer
-            interval: 190
-            onTriggered: searchPopupLoader.source = ""
-        }
-    }
-
-    Item {
-        id: contextInteractionArea
-
-        readonly property real menuWidth: 252
-        readonly property real desiredX:
-            bar.x + window.contextAnchorX - menuWidth / 2
-        x: Math.max(theme.sideMargin,
-            Math.min(desiredX, window.width - theme.sideMargin - menuWidth))
-        y: bar.y - 8 - contextMenu.height
-        width: menuWidth
-        height: contextMenu.height + 8 + bar.height
-        visible: window.contextMenuOpen
-        z: 30
-
-        onVisibleChanged: {
-            if (visible && !contextMenuHover.hovered) {
-                contextCloseDelay.restart()
-            }
-        }
-
-        HoverHandler {
-            id: contextMenuHover
-
-            onHoveredChanged: {
-                if (hovered) {
-                    contextCloseDelay.stop()
-                } else if (window.contextMenuOpen) {
-                    contextCloseDelay.restart()
-                }
-            }
-        }
-
-        Rectangle {
-            id: contextMenu
-
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-            }
-            height: Math.min(
-                window.resultsHeight,
-                55 + window.contextMenuItems.length * 33)
-            radius: theme.radius
-            color: Qt.rgba(theme.base.r, theme.base.g, theme.base.b, 0.99)
-            border.width: 1
-            border.color: Qt.rgba(
-                theme.surface2.r, theme.surface2.g, theme.surface2.b, 0.82)
-            clip: true
-
-            Text {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    leftMargin: 13
-                    rightMargin: 13
-                    topMargin: 10
-                }
-                height: 29
-                text: window.contextApp
-                    ? (window.windowChooserMode
-                        ? window.contextApp.name + " — "
-                            + window.contextWindows.length + " windows"
-                        : window.contextApp.name)
-                    : ""
-                color: theme.text
-                font.family: theme.fontFamily
-                font.pixelSize: 13
-                font.weight: Font.Normal
-                elide: Text.ElideRight
-                verticalAlignment: Text.AlignVCenter
-            }
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    leftMargin: 9
-                    rightMargin: 9
-                    topMargin: 43
-                }
-                height: 1
-                color: theme.surface0
-            }
-
-            ListView {
-                id: contextActionList
-                anchors {
-                    left: parent.left
-                    right: parent.right
-                    top: parent.top
-                    bottom: parent.bottom
-                    leftMargin: 6
-                    rightMargin: 6
-                    topMargin: 48
-                    bottomMargin: 7
-                }
-                model: window.contextMenuItems
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-
-                delegate: Rectangle {
-                    id: contextAction
-                    required property var modelData
-
-                    width: contextActionList.width
-                    height: 33
-                    radius: 8
-                    color: contextPointer.containsMouse
-                        ? Qt.rgba(
-                            theme.surface1.r, theme.surface1.g, theme.surface1.b, 0.88)
-                        : "transparent"
-
-                    Behavior on color { ColorAnimation { duration: 90 } }
-
-                    Rectangle {
-                        anchors {
-                            left: parent.left
-                            right: parent.right
-                            top: parent.top
-                            leftMargin: 6
-                            rightMargin: 6
-                        }
-                        height: modelData.sectionBreak ? 1 : 0
-                        color: theme.surface0
-                        visible: height > 0
-                    }
-
-                    Rectangle {
-                        anchors {
-                            left: parent.left
-                            leftMargin: 9
-                            verticalCenter: parent.verticalCenter
-                        }
-                        width: 5
-                        height: 5
-                        radius: 3
-                        color: theme.mauve
-                        visible: modelData.active === true
-                    }
-
-                    Text {
-                        anchors {
-                            fill: parent
-                            leftMargin: modelData.active === true ? 21 : 10
-                            rightMargin: modelData.kind === "window" ? 42 : 10
-                            topMargin: modelData.sectionBreak ? 2 : 0
-                        }
-                        text: modelData.label
-                        color: modelData.danger ? theme.red : theme.subtext
-                        font.family: theme.fontFamily
-                        font.pixelSize: 12
-                        font.weight: Font.Normal
-                        verticalAlignment: Text.AlignVCenter
-                        elide: Text.ElideRight
-                    }
-
-                    MouseArea {
-                        id: contextPointer
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: window.runContextAction(contextAction.modelData)
-                    }
-
-                    Rectangle {
-                        id: closeWindowButton
-
-                        anchors {
-                            right: parent.right
-                            rightMargin: 5
-                            verticalCenter: parent.verticalCenter
-                        }
-                        width: 24
-                        height: 24
-                        radius: 7
-                        color: closeWindowPointer.containsMouse
-                            ? Qt.rgba(theme.red.r, theme.red.g, theme.red.b, 0.22)
-                            : "transparent"
-                        visible: modelData.kind === "window"
-                        z: 2
-
-                        Behavior on color { ColorAnimation { duration: 90 } }
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: "×"
-                            color: closeWindowPointer.containsMouse
-                                ? theme.red
-                                : theme.overlay
-                            font.family: theme.fontFamily
-                            font.pixelSize: 16
-                            font.weight: Font.Normal
-
-                            Behavior on color { ColorAnimation { duration: 90 } }
-                        }
-
-                        MouseArea {
-                            id: closeWindowPointer
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: window.closeChooserWindow(
-                                String(contextAction.modelData.windowId))
-                        }
-                    }
-                }
-            }
+        PopupSurface {
+            host: window
+            themeData: theme
         }
     }
 
     Timer {
-        id: contextCloseDelay
-        interval: 650
-        onTriggered: window.closeContextMenu()
+        id: popupSurfaceUnloadTimer
+        interval: 190
+        onTriggered: window.popupSurfaceActive = false
     }
+
 }

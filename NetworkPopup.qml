@@ -189,6 +189,30 @@ Item {
                         onClicked: root.tabRequested("notifications")
                     }
                 }
+
+                Rectangle {
+                    width: 70
+                    height: 28
+                    radius: 9
+                    color: displayTabPointer.containsMouse
+                        ? root.themeData.surface0 : "transparent"
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: "Display"
+                        color: root.themeData.subtext
+                        font.family: root.themeData.fontFamily
+                        font.pixelSize: 9
+                    }
+
+                    MouseArea {
+                        id: displayTabPointer
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.tabRequested("display")
+                    }
+                }
             }
 
             Rectangle {

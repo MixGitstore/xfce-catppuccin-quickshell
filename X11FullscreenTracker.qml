@@ -169,12 +169,7 @@ QtObject {
         }
     }
 
-    function updateActiveWindow(line) {
-        const match = line.match(/0x[0-9a-fA-F]+/)
-        const windowId = match ? match[0] : ""
-
-        stateWatcher.running = false
-        geometryWatcher.running = false
+    function updateActiveWindow(windowId) {
         snapGeometryCheck.running = false
         snapCheckDelay.stop()
         fullscreenActive = false
@@ -185,14 +180,21 @@ QtObject {
         scheduleWindowScan()
 
         if (activeWindow.length > 0) {
-            stateWatcher.exec([
-                "stdbuf", "-oL", "xprop", "-spy", "-id", activeWindow,
-                "_NET_WM_STATE", "_NET_FRAME_EXTENTS"
-            ])
-            geometryWatcher.exec([
-                Quickshell.shellDir + "/watch-x11-geometry",
-                activeWindow
-            ])
+            scheduleSnapCheck()
+        }
+    }
+
+    function handleX11Event(line) {
+        const fields = String(line || "").trim().split("\t")
+        if (fields[0] === "active" && fields.length >= 2) {
+            updateActiveWindow(fields[1])
+        } else if (fields[0] === "clients") {
+            scheduleWindowScan()
+        } else if (fields[0] === "state" && fields.length >= 3) {
+            fullscreenActive = fields[1] === "1"
+            maximizedActive = fields[2] === "1"
+        } else if (fields[0] === "geometry") {
+            scheduleSnapCheck()
         }
     }
 
@@ -216,42 +218,21 @@ QtObject {
         ])
     }
 
-    property Process activeWindowWatcher: Process {
+    property Process eventWatcher: Process {
         running: tracker.enabled
         command: [
-            "stdbuf", "-oL", "xprop", "-spy", "-root",
-            "_NET_ACTIVE_WINDOW"
+            Quickshell.shellDir + "/watch-x11-state"
         ]
 
         stdout: SplitParser {
             onRead: function(line) {
-                tracker.updateActiveWindow(line)
+                tracker.handleX11Event(line)
             }
         }
 
         onRunningChanged: {
             if (!running && tracker.enabled) {
-                activeWatcherRestart.restart()
-            }
-        }
-    }
-
-    property Process windowListWatcher: Process {
-        running: tracker.enabled
-        command: [
-            "stdbuf", "-oL", "xprop", "-spy", "-root",
-            "_NET_CLIENT_LIST_STACKING"
-        ]
-
-        stdout: SplitParser {
-            onRead: function(line) {
-                tracker.scheduleWindowScan()
-            }
-        }
-
-        onRunningChanged: {
-            if (!running && tracker.enabled) {
-                windowWatcherRestart.restart()
+                eventWatcherRestart.restart()
             }
         }
     }
@@ -277,40 +258,6 @@ QtObject {
         }
     }
 
-    property Process stateWatcher: Process {
-        stdout: SplitParser {
-            onRead: function(line) {
-                if (line.indexOf("_NET_WM_STATE") === 0) {
-                    tracker.fullscreenActive =
-                        line.indexOf("_NET_WM_STATE_FULLSCREEN") !== -1
-                    tracker.maximizedActive =
-                        line.indexOf("_NET_WM_STATE_MAXIMIZED_HORZ") !== -1
-                        && line.indexOf("_NET_WM_STATE_MAXIMIZED_VERT") !== -1
-                } else if (line.indexOf("_NET_FRAME_EXTENTS") === 0) {
-                    tracker.scheduleSnapCheck()
-                }
-            }
-        }
-
-        onRunningChanged: {
-            if (!running) {
-                tracker.fullscreenActive = false
-                tracker.maximizedActive = false
-            }
-        }
-    }
-
-    property Process geometryWatcher: Process {
-        // Tiny Xlib listener: event-driven and idle between geometry changes.
-        stdout: SplitParser {
-            onRead: function(line) {
-                if (String(line).trim() === "geometry") {
-                    tracker.scheduleSnapCheck()
-                }
-            }
-        }
-    }
-
     property Process snapGeometryCheck: Process {
         stdout: SplitParser {
             onRead: function(line) {
@@ -326,11 +273,11 @@ QtObject {
         }
     }
 
-    property Timer activeWatcherRestart: Timer {
+    property Timer eventWatcherRestart: Timer {
         interval: 2000
         onTriggered: {
-            if (tracker.enabled && !activeWindowWatcher.running) {
-                activeWindowWatcher.running = true
+            if (tracker.enabled && !eventWatcher.running) {
+                eventWatcher.running = true
             }
         }
     }
@@ -343,15 +290,6 @@ QtObject {
     property Timer snapCheckDelay: Timer {
         interval: 90
         onTriggered: tracker.checkActiveSnap()
-    }
-
-    property Timer windowWatcherRestart: Timer {
-        interval: 2000
-        onTriggered: {
-            if (tracker.enabled && !windowListWatcher.running) {
-                windowListWatcher.running = true
-            }
-        }
     }
 
 }

@@ -1,4 +1,5 @@
 /watch-x11-geometry
+/watch-x11-state
 *.log
 *.qslog
 *~

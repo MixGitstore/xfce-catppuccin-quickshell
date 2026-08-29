@@ -11,7 +11,8 @@ if [[ "$project_dir" != "$expected_dir" ]]; then
     exit 1
 fi
 
-for command_name in qs make cc wmctrl xprop curl plocate xfconf-query; do
+for command_name in qs make cc wmctrl xprop curl plocate xfconf-query \
+        pactl redshift xrandr gdbus notify-send; do
     if ! command -v "$command_name" >/dev/null 2>&1; then
         printf 'Missing required command: %s\n' "$command_name" >&2
         exit 1

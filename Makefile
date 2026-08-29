@@ -6,16 +6,16 @@ LDLIBS ?= -lX11
 
 .PHONY: all check clean
 
-all: watch-x11-geometry
+all: watch-x11-state
 
-watch-x11-geometry: watch-x11-geometry.c
+watch-x11-state: watch-x11-state.c
 	$(CC) $(CPPFLAGS) $(CFLAGS) -std=c11 -Wall -Wextra -Wpedantic \
 		$(LDFLAGS) -o $@ $< $(LDLIBS)
 
 check:
 	bash -n ./*.sh
 	$(CC) $(CPPFLAGS) -std=c11 -Wall -Wextra -Wpedantic \
-		-fsyntax-only watch-x11-geometry.c
+		-fsyntax-only watch-x11-state.c
 
 clean:
-	$(RM) watch-x11-geometry
+	$(RM) watch-x11-geometry watch-x11-state

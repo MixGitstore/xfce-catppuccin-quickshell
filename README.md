@@ -16,6 +16,24 @@ uninstalling any XFCE packages.
 The video demonstrates the bar, launcher, file search, running applications,
 window controls, audio devices, calendar, notifications, and system resources.
 
+## What's new in 1.2.0
+
+- **Display controls:** a third status tab now provides software brightness,
+  manual or scheduled Night Light, color temperature, resolution, and refresh
+  rate controls. Risky mode changes automatically roll back after 15 seconds
+  unless they are confirmed.
+- **Persistent audio routing:** active playback streams can be moved to any
+  available output. Remembered rules follow applications and media across new
+  PipeWire streams, while selecting the default output removes the fixed rule.
+- **Lower idle surface cost:** popup content now lives in one transparent
+  window created only when needed. Individual heavy interfaces still load and
+  unload lazily inside it.
+- **Leaner X11 tracking:** one small event-driven helper now watches the active
+  window, client list, fullscreen/maximized state, and geometry changes.
+- **Taskbar and AppImage polish:** the application group grows evenly around
+  its center, and the documentation now explains reliable desktop entries and
+  icons for applications such as Obsidian.
+
 ## Features
 
 - Catppuccin Mocha styling with matching bundled SVG icons.
@@ -44,13 +62,19 @@ window controls, audio devices, calendar, notifications, and system resources.
   and Network/Notifications quick actions.
 - PipeWire output volume, microphone controls, device selection, mute, and
   MPRIS media playback controls.
+- Per-application PipeWire output routing with persistent rules and automatic
+  restoration when matching streams reappear.
 - NetworkManager popup with active connection information and Wi-Fi support
   when an adapter is present.
 - Notification server, popup history, actions, clear controls, and toasts.
+- Unified Network, Notifications, and Display tabs in the status popup.
+- X11 display controls for software brightness, Night Light schedules, color
+  temperature, resolution, and refresh rate, including automatic mode rollback.
 - Weather for a configurable location, clock, date, and monthly calendar.
 - System popup with CPU, RAM, GPU, storage, Switch User, Restart, and Shut Down.
-- Lazy popup creation, event-driven X11 window tracking, and no permanent
-  resource polling while the relevant popup is closed.
+- A single on-demand popup surface, lazy heavy components, consolidated
+  event-driven X11 tracking, and no permanent resource polling while the
+  relevant popup is closed.
 
 ## Tested environment
 
@@ -70,7 +94,8 @@ Install the Fedora dependencies:
 ```bash
 sudo dnf copr enable errornointernet/quickshell
 sudo dnf install quickshell wmctrl curl plocate gcc libX11-devel make xprop \
-  xfce4-screenshooter pavucontrol papirus-icon-theme xdg-user-dirs
+  xfce4-screenshooter pavucontrol pulseaudio-utils redshift xrandr glib2 \
+  libnotify papirus-icon-theme xdg-user-dirs
 ```
 
 The UI is designed for **Maple Mono NF Base Regular**. If that font is not
@@ -176,6 +201,37 @@ Runtime Pin/Unpin order is stored in `pinned-apps.json`.
 
 The right-side quick-action order is stored in `quick-actions.json`. Hold and
 drag an icon to move it; no QML editing is required.
+
+### Display and Night Light
+
+Open the status control on the right side of the bar and select **Display**.
+The panel provides:
+
+- software brightness from 10% to 100%;
+- manual Night Light and an automatic start/end schedule;
+- a 3000–6000 K color-temperature range;
+- resolution and refresh-rate selection for the active X11 output.
+
+Brightness and color temperature use one-shot `redshift` commands, so no
+Redshift daemon remains in the background. Settings are stored in
+`display-state.json`, reapplied after login and resume, and reevaluated once per
+minute when automatic mode is enabled. A resolution or refresh-rate change must
+be confirmed within 15 seconds or the previous mode is restored automatically.
+
+These controls adjust X11 gamma ramps rather than a laptop's physical backlight.
+They currently target the first connected and active output reported by
+`xrandr`.
+
+### Per-application audio routing
+
+Open the Audio popup and choose **Route audio**. Select an active playback
+stream, then choose an output. The bar moves the stream immediately and stores
+the rule in `audio-routes.json`.
+
+The routing service listens for PipeWire/PulseAudio stream events and restores
+matching routes automatically. It combines application, process, media-title,
+and MPRIS metadata where available. Choose **Default output** for a stream to
+remove its fixed route and let it follow the system default again.
 
 ### AppImage applications and missing icons
 
@@ -356,12 +412,17 @@ Do not disable or remove these services for this configuration:
 - One clock update per minute.
 - Weather refresh limited to once per 15 minutes.
 - Search results and the audio, calendar, clipboard, system, network, and
-  notification popups are created lazily and destroyed after closing.
+  notification components are created lazily and destroyed after closing.
+- The large transparent popup surface exists only while a popup or toast is
+  visible; the permanent X11 surface contains only the compact bottom bar.
 - MPRIS players, microphones, secondary PipeWire devices, and audio streams are
   tracked only while the audio popup is open; the default output remains live
   for the volume icon and scroll control.
 - System resource sampling runs every two seconds only while its popup is open.
-- X11 window and snap state are event-driven instead of continuously polled.
+- One Xlib helper handles active-window, client-list, fullscreen/maximized, and
+  geometry events instead of running separate watchers or continuously polling.
+- Audio routing reacts to `pactl subscribe` events and performs bounded,
+  delayed scans only when stream or output state changes.
 - File search uses the indexed `plocate` database and returns at most 12 files.
 - Clipboard history remains in memory and is never written to disk.
 
@@ -384,7 +445,9 @@ make clean && make
 
 If applications appear but do not launch, update their commands and window
 classes in `Apps.js`. If file results are missing, run `sudo updatedb`. If the
-audio popup is empty, confirm PipeWire and WirePlumber are active.
+audio popup is empty, confirm PipeWire and WirePlumber are active. If Display
+controls do not apply, confirm that `redshift` and `xrandr` are installed and
+that the session is XFCE on X11.
 
 A portal warning about an application ID can be harmless when the configuration
 otherwise reports `Configuration Loaded`; inspect the remaining log for QML or
@@ -395,15 +458,19 @@ service errors.
 - `shell.qml` — root configuration and per-screen bar instances.
 - `UserConfig.qml` — weather and profile settings intended for users.
 - `Bar.qml` — bar behavior, launcher, taskbar, and lazy popup loaders.
+- `PopupSurface.qml` and `AppContextPopup.qml` — on-demand popup window and
+  extracted application context menu.
 - `*Popup.qml` — independently loaded Search, Audio, Calendar, Clipboard,
-  System, Network, and Notification interfaces.
+  System, Network, Notification, and Display interfaces.
 - `PinnedState.qml` and `QuickActionState.qml` — persistent application and
   quick-action ordering.
+- `AudioRouteState.qml` and `DisplayState.qml` — persistent audio-route and
+  display/Night Light state.
 - `Apps.js` — default pinned applications and their actions.
 - `Theme.qml` — Catppuccin palette, fonts, and dimensions.
 - `assets/icons/` — bundled SVG icons.
-- `X11FullscreenTracker.qml` and `watch-x11-geometry.c` — event-driven X11
-  window state tracking.
+- `X11FullscreenTracker.qml` and `watch-x11-state.c` — consolidated,
+  event-driven X11 window state tracking.
 - `*.sh` — focused integration, search, action, and rollback helpers.
 
 ## License
