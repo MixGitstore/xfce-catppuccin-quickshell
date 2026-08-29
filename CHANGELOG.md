@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 - 2026-08-29
+
+- Animated the central taskbar width around its center so application buttons
+  expand and contract evenly on both sides as windows open or close.
+- Added portable AppImage desktop-entry and icon setup guidance, including an
+  Obsidian example and X11 window-class troubleshooting.
+
 ## 1.1.0 - 2026-08-25
 
 - Added drag-and-drop ordering for taskbar applications and right-side quick

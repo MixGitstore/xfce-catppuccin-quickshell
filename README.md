@@ -28,7 +28,8 @@ window controls, audio devices, calendar, notifications, and system resources.
 - Search across installed applications, files, and folders.
 - Fast bounded file search through the existing `plocate` database instead of
   recursively scanning the home directory.
-- Pinned applications plus automatically detected running applications.
+- Pinned applications plus automatically detected running applications, with a
+  centered taskbar that expands and contracts evenly as windows open or close.
 - Drag-and-drop reordering for pinned/running application buttons; dropping a
   running unpinned application into the pinned area pins it in that position.
 - Active/running indicators, click-to-focus, and click-again-to-minimize.
@@ -175,6 +176,42 @@ Runtime Pin/Unpin order is stored in `pinned-apps.json`.
 
 The right-side quick-action order is stored in `quick-actions.json`. Hold and
 drag an icon to move it; no QML editing is required.
+
+### AppImage applications and missing icons
+
+Applications launched directly from an AppImage should have a desktop entry in
+`~/.local/share/applications`. The entry gives the taskbar a stable application
+ID, launch command, icon name, and X11 window class.
+
+For example, an Obsidian AppImage can use
+`~/.local/share/applications/md.obsidian.Obsidian.desktop`:
+
+```ini
+[Desktop Entry]
+Name=Obsidian
+Exec=/absolute/path/to/Obsidian.AppImage %U
+TryExec=/absolute/path/to/Obsidian.AppImage
+Terminal=false
+Type=Application
+Icon=obsidian
+StartupWMClass=md.Obsidian
+MimeType=x-scheme-handler/obsidian;
+Categories=Office;
+```
+
+Install its PNG icon as
+`~/.local/share/icons/hicolor/512x512/apps/obsidian.png`, then refresh the
+desktop database:
+
+```bash
+update-desktop-database ~/.local/share/applications
+gtk-update-icon-cache ~/.local/share/icons/hicolor
+```
+
+Replace the example paths with real absolute paths. If another AppImage still
+uses a fallback icon, run `xprop WM_CLASS`, click its window, and copy the
+reported class into `StartupWMClass` and the matching `wmClasses` entry in
+`Apps.js` when a manual pinned entry is needed.
 
 ### Change fonts, dimensions, or colors
 

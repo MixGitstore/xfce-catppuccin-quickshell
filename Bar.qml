@@ -1649,9 +1649,19 @@ PanelWindow {
                 border.color: theme.surface0
                 clip: true
 
+                // Animate the container around its center so taskbar growth and
+                // shrinkage remain visually balanced on both sides.
+                Behavior on width {
+                    NumberAnimation {
+                        duration: 180
+                        easing.type: Easing.OutCubic
+                    }
+                }
+
                 Row {
                     id: pinnedRow
                     anchors.centerIn: parent
+                    width: Math.max(0, parent.width - 12)
                     spacing: theme.itemSpacing
 
                     Repeater {
