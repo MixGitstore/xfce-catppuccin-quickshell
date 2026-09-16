@@ -40,7 +40,11 @@ Item {
 
     Connections {
         target: host
-        function onSearchQueryChanged() { Qt.callLater(root.resetSelection) }
+
+        function onSearchQueryChanged() {
+            Qt.callLater(root.resetSelection)
+        }
+
         function onFileResultsChanged() {
             if (resultsList.currentIndex < 0 && resultsList.count > 0) {
                 resultsList.currentIndex = 0
@@ -48,8 +52,15 @@ Item {
         }
     }
 
+    MouseArea {
+        anchors.fill: parent
+        enabled: host.searchOpen
+        onClicked: host.closeSearch()
+    }
+
     Rectangle {
         id: searchResults
+        z: 1
     
         x: barItem.x + 7
         y: barItem.y - 8 - height

@@ -8,7 +8,20 @@ QtObject {
 
     property alias routes: adapter.routes
     property var sinkIndices: ({})
-    readonly property var mediaPlayers: Mpris.players.values
+    property int monitoringClients: 0
+    property bool listenerRetryReady: true
+    readonly property bool monitoringActive:
+        routes.length > 0 || monitoringClients > 0
+    readonly property var mediaPlayers:
+        monitoringActive ? Mpris.players.values : []
+
+    function acquireMonitoring() {
+        monitoringClients += 1
+    }
+
+    function releaseMonitoring() {
+        monitoringClients = Math.max(0, monitoringClients - 1)
+    }
 
     function normalized(value) {
         return String(value || "").trim().toLowerCase().replace(/\s+/g, " ")
@@ -227,7 +240,7 @@ QtObject {
     }
 
     property Process eventListener: Process {
-        running: true
+        running: root.monitoringActive && root.listenerRetryReady
         command: ["stdbuf", "-oL", "pactl", "subscribe"]
 
         stdout: SplitParser {
@@ -235,7 +248,9 @@ QtObject {
         }
 
         onRunningChanged: {
-            if (!running) {
+            if (!running && root.monitoringActive
+                    && root.listenerRetryReady) {
+                root.listenerRetryReady = false
                 listenerRestart.restart()
             }
         }
@@ -272,8 +287,8 @@ QtObject {
     property Timer listenerRestart: Timer {
         interval: 2500
         onTriggered: {
-            if (!eventListener.running) {
-                eventListener.running = true
+            if (root.monitoringActive) {
+                root.listenerRetryReady = true
             }
         }
     }
@@ -298,8 +313,23 @@ QtObject {
         }
     }
 
+    onMonitoringActiveChanged: {
+        if (monitoringActive) {
+            refreshSinks()
+            scanDelay.restart()
+        } else {
+            listenerRetryReady = true
+            scanDelay.stop()
+            metadataFollowup.stop()
+            sinkRefreshDelay.stop()
+            listenerRestart.stop()
+        }
+    }
+
     Component.onCompleted: {
-        refreshSinks()
-        scanDelay.restart()
+        if (monitoringActive) {
+            refreshSinks()
+            scanDelay.restart()
+        }
     }
 }

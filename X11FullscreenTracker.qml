@@ -18,6 +18,7 @@ QtObject {
     property bool enabled: true
     property var clientWindows: []
     property var windowScanBuffer: []
+    property var pendingActiveWindows: []
     property bool rescanRequested: false
     property bool snapRecheckRequested: false
 
@@ -43,6 +44,28 @@ QtObject {
             }
         }
         return false
+    }
+
+    function sameWindowList(first, second) {
+        if (first.length !== second.length) {
+            return false
+        }
+        for (let index = 0; index < first.length; ++index) {
+            const left = first[index]
+            const right = second[index]
+            if (left.id !== right.id || left.title !== right.title
+                    || left.skipTaskbar !== right.skipTaskbar
+                    || left.classes.length !== right.classes.length) {
+                return false
+            }
+            for (let classIndex = 0;
+                    classIndex < left.classes.length; ++classIndex) {
+                if (left.classes[classIndex] !== right.classes[classIndex]) {
+                    return false
+                }
+            }
+        }
+        return true
     }
 
     function windowForClasses(classes) {
@@ -94,6 +117,16 @@ QtObject {
 
     function isKnownClient(windowId) {
         for (let index = 0; index < clientWindows.length; ++index) {
+            if (clientWindows[index].id === windowId
+                    && !clientWindows[index].skipTaskbar) {
+                return true
+            }
+        }
+        return false
+    }
+
+    function isListedWindow(windowId) {
+        for (let index = 0; index < clientWindows.length; ++index) {
             if (clientWindows[index].id === windowId) {
                 return true
             }
@@ -101,16 +134,52 @@ QtObject {
         return false
     }
 
+    function queuePendingActiveWindow(windowId) {
+        if (windowId.length === 0 || isListedWindow(windowId)
+                || pendingActiveWindows.indexOf(windowId) !== -1) {
+            return
+        }
+
+        const pending = pendingActiveWindows.slice()
+        pending.push(windowId)
+        pendingActiveWindows = pending.slice(Math.max(0, pending.length - 8))
+    }
+
     function rememberClientWindow(windowId) {
         if (windowId.length > 0 && isKnownClient(windowId)) {
             lastClientActiveWindow = windowId
+            pendingActiveWindows = []
+        } else {
+            queuePendingActiveWindow(windowId)
         }
     }
 
+    function reconcilePendingActiveWindows() {
+        for (let index = pendingActiveWindows.length - 1; index >= 0; --index) {
+            const candidate = pendingActiveWindows[index]
+            if (isKnownClient(candidate)) {
+                lastClientActiveWindow = candidate
+                pendingActiveWindows = []
+                return
+            }
+        }
+
+        // Drop newly identified desktop/skip-taskbar surfaces, but retain a
+        // small bounded set of unknown IDs for the next membership scan.
+        pendingActiveWindows = pendingActiveWindows.filter(function(candidate) {
+            return !isListedWindow(candidate)
+        }).slice(-8)
+    }
+
     function activeClientWindow() {
-        return isKnownClient(activeWindow)
-            ? activeWindow
-            : lastClientActiveWindow
+        if (isKnownClient(activeWindow)) {
+            return activeWindow
+        }
+        // A listed skip-taskbar surface (for example the desktop) must not make
+        // the previously focused application look active. Unknown IDs are
+        // typically Quickshell's focusable panel, for which the fallback is
+        // required so taskbar toggles remain stable.
+        return isListedWindow(activeWindow) ? "" : lastClientActiveWindow
     }
 
     function markWindowMinimized(windowId) {
@@ -122,6 +191,9 @@ QtObject {
         if (lastClientActiveWindow === windowId) {
             lastClientActiveWindow = ""
         }
+        pendingActiveWindows = pendingActiveWindows.filter(function(candidate) {
+            return candidate !== windowId
+        })
     }
 
     function scheduleWindowScan() {
@@ -158,14 +230,12 @@ QtObject {
         })
 
         if (classes.length > 0) {
-            const nextBuffer = windowScanBuffer.slice()
-            nextBuffer.push({
+            windowScanBuffer.push({
                 id: id,
                 title: title,
                 classes: classes,
                 skipTaskbar: skipTaskbar
             })
-            windowScanBuffer = nextBuffer
         }
     }
 
@@ -177,7 +247,6 @@ QtObject {
         snappedActive = false
         activeWindow = windowId === "0x0" ? "" : windowId
         rememberClientWindow(activeWindow)
-        scheduleWindowScan()
 
         if (activeWindow.length > 0) {
             scheduleSnapCheck()
@@ -248,8 +317,13 @@ QtObject {
             if (running) {
                 tracker.windowScanBuffer = []
             } else {
-                tracker.clientWindows = tracker.windowScanBuffer.slice()
+                const nextWindows = tracker.windowScanBuffer.slice()
+                if (!tracker.sameWindowList(
+                        tracker.clientWindows, nextWindows)) {
+                    tracker.clientWindows = nextWindows
+                }
                 tracker.rememberClientWindow(tracker.activeWindow)
+                tracker.reconcilePendingActiveWindows()
                 if (tracker.rescanRequested) {
                     tracker.rescanRequested = false
                     windowScanDelay.restart()

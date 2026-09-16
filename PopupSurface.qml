@@ -12,6 +12,14 @@ PopupWindow {
     color: "transparent"
     visible: host.popupSurfaceActive && !host.fullscreenLocked
     grabFocus: false
+    readonly property bool interactivePopupOpen:
+        host.searchOpen || host.contextMenuOpen || host.audioOpen
+        || host.systemOpen || host.calendarOpen || host.clipboardOpen
+        || host.networkOpen || host.notificationsOpen || host.displayOpen
+    readonly property int toastHeight: host.notificationToast
+            && host.notificationToast.actions
+            && host.notificationToast.actions.length > 0
+        ? 126 : 98
 
     anchor {
         window: host
@@ -24,7 +32,12 @@ PopupWindow {
         adjustment: PopupAdjustment.None
     }
 
-    mask: host.popupRequested ? popupInputMask : emptyInputMask
+    // A notification must intercept input only on the visible toast. Keeping
+    // the full 410 px surface clickable would temporarily block applications
+    // behind it. Interactive popups retain the full mask for click-outside.
+    mask: root.interactivePopupOpen
+        ? popupInputMask
+        : (host.notificationToast !== null ? toastInputMask : emptyInputMask)
 
     Region {
         id: popupInputMask
@@ -40,6 +53,14 @@ PopupWindow {
         y: 0
         width: 0
         height: 0
+    }
+
+    Region {
+        id: toastInputMask
+        x: root.host.width - root.themeData.sideMargin - width - 8
+        y: root.height - height
+        width: 360
+        height: root.toastHeight
     }
 
     // These lightweight proxies preserve the exact coordinates the popup

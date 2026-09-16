@@ -16,23 +16,23 @@ uninstalling any XFCE packages.
 The video demonstrates the bar, launcher, file search, running applications,
 window controls, audio devices, calendar, notifications, and system resources.
 
-## What's new in 1.2.0
+## What's new in 1.2.1
 
-- **Display controls:** a third status tab now provides software brightness,
-  manual or scheduled Night Light, color temperature, resolution, and refresh
-  rate controls. Risky mode changes automatically roll back after 15 seconds
-  unless they are confirmed.
-- **Persistent audio routing:** active playback streams can be moved to any
-  available output. Remembered rules follow applications and media across new
-  PipeWire streams, while selecting the default output removes the fixed rule.
-- **Lower idle surface cost:** popup content now lives in one transparent
-  window created only when needed. Individual heavy interfaces still load and
-  unload lazily inside it.
-- **Leaner X11 tracking:** one small event-driven helper now watches the active
-  window, client list, fullscreen/maximized state, and geometry changes.
-- **Taskbar and AppImage polish:** the application group grows evenly around
-  its center, and the documentation now explains reliable desktop entries and
-  icons for applications such as Obsidian.
+- **Reliable application clicks:** focus changes no longer rebuild taskbar
+  buttons during a click, newly activated clients survive panel-focus races,
+  slow presses remain normal clicks, and completed drags cannot suppress the
+  next activation. Window chooser data is refreshed only when opened.
+- **Lower X11 event overhead:** the native helper rescans applications only
+  when client membership changes, not whenever a window is focused or raised.
+  Identical window models are no longer republished to QML.
+- **Safer popup input:** notification toasts intercept only their visible area,
+  Search closes cleanly when the user clicks outside its result panel, and all
+  transient popup state is cleared immediately on true fullscreen transitions.
+- **Lazy audio-route monitoring:** the persistent `pactl` listener and MPRIS
+  matching run only while the Audio popup is open or saved routing rules need
+  automatic restoration.
+- **More deliberate reordering:** application and quick-action icons begin a
+  drag after 12 pixels of movement instead of treating a held click as a drag.
 
 ## Features
 
@@ -415,14 +415,17 @@ Do not disable or remove these services for this configuration:
   notification components are created lazily and destroyed after closing.
 - The large transparent popup surface exists only while a popup or toast is
   visible; the permanent X11 surface contains only the compact bottom bar.
-- MPRIS players, microphones, secondary PipeWire devices, and audio streams are
-  tracked only while the audio popup is open; the default output remains live
-  for the volume icon and scroll control.
+- Microphones, secondary PipeWire devices, and the PipeWire stream models used
+  by the interface are tracked only while the Audio popup is open. A lightweight
+  `pactl`/MPRIS route matcher remains active after closing it only when saved
+  rules require automatic restoration. The default output stays live for the
+  volume icon and scroll control.
 - System resource sampling runs every two seconds only while its popup is open.
 - One Xlib helper handles active-window, client-list, fullscreen/maximized, and
   geometry events instead of running separate watchers or continuously polling.
-- Audio routing reacts to `pactl subscribe` events and performs bounded,
-  delayed scans only when stream or output state changes.
+- Audio routing starts its `pactl subscribe` listener only while Audio is open
+  or saved rules exist, then performs bounded, delayed scans only when stream or
+  output state changes.
 - File search uses the indexed `plocate` database and returns at most 12 files.
 - Clipboard history remains in memory and is never written to disk.
 
@@ -452,6 +455,11 @@ that the session is XFCE on X11.
 A portal warning about an application ID can be harmless when the configuration
 otherwise reports `Configuration Loaded`; inspect the remaining log for QML or
 service errors.
+
+If Qt reports `QGLXContext: Failed to create dummy context` immediately after
+an NVIDIA driver update, verify that the loaded kernel module and installed
+userspace driver have the same version. A reboot is normally required after the
+new kernel module has been built.
 
 ## Project layout
 

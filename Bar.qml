@@ -27,6 +27,7 @@ PanelWindow {
     property bool notificationsOpen: false
     property bool displayOpen: false
     property bool taskbarReordering: false
+    property bool audioMonitoringRegistered: false
     property var audioAnchorItem: null
     property var notificationToast: null
     property var clipboardItems: []
@@ -982,6 +983,19 @@ PanelWindow {
         audioOpen = false
     }
 
+    function syncAudioRouteMonitoring() {
+        if (audioOpen === audioMonitoringRegistered) {
+            return
+        }
+        if (audioOpen) {
+            audioRouteState.acquireMonitoring()
+            audioMonitoringRegistered = true
+        } else {
+            audioRouteState.releaseMonitoring()
+            audioMonitoringRegistered = false
+        }
+    }
+
     function toggleAudio() {
         if (audioOpen) {
             closeAudio()
@@ -1233,6 +1247,9 @@ PanelWindow {
         contextAnchorX = anchorX
         windowChooserMode = true
         contextMenuOpen = true
+        // Refresh titles and stacking only when the chooser is actually used.
+        // This keeps the idle X11 path event-driven without showing stale data.
+        windowTracker.scheduleWindowScan()
     }
 
     function openContextMenu(app, windowId, appIsActive, anchorX) {
@@ -1251,6 +1268,9 @@ PanelWindow {
         contextWindows = []
         windowChooserMode = false
         contextMenuOpen = true
+        // Refresh the selected window after the pointer release, when rebuilding
+        // the task model can no longer invalidate the pressed delegate.
+        windowTracker.scheduleWindowScan()
     }
 
     function closeContextMenu() {
@@ -1263,6 +1283,19 @@ PanelWindow {
         if (popupSurfaceLoader.item) {
             popupSurfaceLoader.item.stopContextCloseTimer()
         }
+    }
+
+    function closeTransientUi() {
+        closeNetwork()
+        closeNotifications()
+        closeDisplay()
+        closeClipboard()
+        closeCalendar()
+        closeAudio()
+        closeSystem()
+        closeSearch()
+        closeContextMenu()
+        notificationToast = null
     }
 
     function closeChooserWindow(windowId) {
@@ -1448,11 +1481,53 @@ PanelWindow {
         }
     }
 
+    Connections {
+        target: window.windowTracker
+
+        function onClientWindowsChanged() {
+            if (!window.contextMenuOpen || !window.contextApp) {
+                return
+            }
+
+            const refreshedWindows = window.windowTracker.windowsForClasses(
+                window.contextApp.wmClasses)
+            if (window.windowChooserMode) {
+                window.contextWindows = refreshedWindows
+                if (refreshedWindows.length === 0) {
+                    window.closeContextMenu()
+                }
+            } else {
+                window.contextWindowId = window.windowTracker.windowForClasses(
+                    window.contextApp.wmClasses)
+                window.contextAppActive = window.windowTracker.classesAreActive(
+                    window.contextApp.wmClasses)
+            }
+        }
+    }
+
     Component.onCompleted: {
         window.refreshWeather()
         window.captureClipboard(Quickshell.clipboardText)
         if (window.popupRequested) {
             window.popupSurfaceActive = true
+        }
+    }
+
+    Component.onDestruction: {
+        if (window.audioMonitoringRegistered) {
+            window.audioRouteState.releaseMonitoring()
+            window.audioMonitoringRegistered = false
+        }
+    }
+
+    onAudioOpenChanged: window.syncAudioRouteMonitoring()
+
+    onFullscreenLockedChanged: {
+        // A true fullscreen transition may happen while pinnedOpen is already
+        // false, so close lazy popup state explicitly instead of merely hiding
+        // its window. This also releases on-demand audio monitoring at once.
+        if (fullscreenLocked) {
+            closeTransientUi()
         }
     }
 
@@ -1518,16 +1593,7 @@ PanelWindow {
         } else {
             // A popup must not keep the bar expanded when the active window
             // becomes maximized, snapped or fullscreen.
-            closeNetwork()
-            closeNotifications()
-            closeDisplay()
-            closeClipboard()
-            closeCalendar()
-            closeAudio()
-            closeSystem()
-            closeSearch()
-            closeContextMenu()
-            notificationToast = null
+            closeTransientUi()
 
             if (!barHover.hovered) {
                 hideDelay.restart()

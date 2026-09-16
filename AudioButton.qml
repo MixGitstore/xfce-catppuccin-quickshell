@@ -86,20 +86,6 @@ Item {
         Behavior on color { ColorAnimation { duration: 100 } }
     }
 
-    Timer {
-        id: reorderHoldTimer
-        interval: 230
-        repeat: false
-        onTriggered: {
-            if (!root.draggable || !root.dragArmed || !pointer.pressed) {
-                return
-            }
-            root.reordering = true
-            root.suppressNextClick = true
-            root.reorderStarted()
-        }
-    }
-
     MouseArea {
         id: pointer
         anchors.fill: parent
@@ -120,7 +106,6 @@ Item {
             root.dragOffsetX = 0
             root.suppressNextClick = false
             root.dragArmed = true
-            reorderHoldTimer.restart()
         }
         onPositionChanged: function(mouse) {
             if (!root.draggable || !root.dragArmed || !pointer.pressed) {
@@ -128,8 +113,7 @@ Item {
             }
             const point = root.mapToItem(null, mouse.x, mouse.y)
             const distance = point.x - root.pressSceneX
-            if (!root.reordering && Math.abs(distance) >= 6) {
-                reorderHoldTimer.stop()
+            if (!root.reordering && Math.abs(distance) >= 12) {
                 root.reordering = true
                 root.suppressNextClick = true
                 root.reorderStarted()
@@ -139,7 +123,6 @@ Item {
             }
         }
         onReleased: function(mouse) {
-            reorderHoldTimer.stop()
             root.dragArmed = false
             if (mouse.button !== Qt.LeftButton || !root.reordering) {
                 return
@@ -148,9 +131,11 @@ Item {
             root.reorderFinished(point.x)
             root.reordering = false
             root.dragOffsetX = 0
+            Qt.callLater(function() {
+                root.suppressNextClick = false
+            })
         }
         onCanceled: {
-            reorderHoldTimer.stop()
             root.dragArmed = false
             if (root.reordering) {
                 root.reordering = false

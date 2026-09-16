@@ -7,7 +7,7 @@ static Display *display;
 static Window root_window;
 static Window active_window = None;
 static Atom net_active_window;
-static Atom net_client_list_stacking;
+static Atom net_client_list;
 static Atom net_wm_state;
 static Atom net_wm_state_fullscreen;
 static Atom net_wm_state_maximized_horz;
@@ -113,8 +113,10 @@ int main(void)
     root_window = DefaultRootWindow(display);
 
     net_active_window = XInternAtom(display, "_NET_ACTIVE_WINDOW", False);
-    net_client_list_stacking = XInternAtom(display,
-        "_NET_CLIENT_LIST_STACKING", False);
+    // Membership changes only when a client is created or destroyed. Watching
+    // _NET_CLIENT_LIST_STACKING here would also rescan every focus/raise and
+    // could rebuild a taskbar button while it is being clicked.
+    net_client_list = XInternAtom(display, "_NET_CLIENT_LIST", False);
     net_wm_state = XInternAtom(display, "_NET_WM_STATE", False);
     net_wm_state_fullscreen = XInternAtom(display,
         "_NET_WM_STATE_FULLSCREEN", False);
@@ -135,7 +137,7 @@ int main(void)
                 && event.xproperty.window == root_window) {
             if (event.xproperty.atom == net_active_window) {
                 select_active_window(read_active_window());
-            } else if (event.xproperty.atom == net_client_list_stacking) {
+            } else if (event.xproperty.atom == net_client_list) {
                 puts("clients");
             }
             continue;

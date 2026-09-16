@@ -1,5 +1,31 @@
 # Changelog
 
+## 1.2.1 - 2026-09-16
+
+- Fixed intermittent taskbar clicks by preventing X11 focus changes from
+  rebuilding application delegates between pointer press and release, and by
+  reconciling newly activated clients after delayed membership scans.
+- Made icon reordering require an intentional 12-pixel drag instead of a
+  230-millisecond hold, and ensured that a drag released outside an icon cannot
+  suppress the next normal click.
+- Excluded skip-taskbar surfaces such as Quickshell itself from active-client
+  tracking so focus, minimize, and restore toggles remain reliable.
+- Changed the native X11 helper to watch client-list membership rather than
+  stacking-order changes, eliminating full window rescans on focus and raise.
+- Avoided publishing identical X11 window models and reduced temporary array
+  allocations while rebuilding a genuinely changed client list.
+- Restricted notification input handling to the visible toast when no
+  interactive popup is open, preventing invisible input blocking above the bar.
+- Added click-outside dismissal to Search while preserving interaction with
+  visible results.
+- Refreshed window titles and stacking on demand when an application chooser or
+  context menu opens, without restoring constant background rescans.
+- Closed transient popup state immediately on true fullscreen transitions so
+  hidden menus cannot reappear and lazy audio monitoring is released promptly.
+- Made advanced audio-route monitoring lazy: `pactl subscribe` and MPRIS route
+  matching now stay active only while Audio is open or saved routing rules need
+  automatic restoration.
+
 ## 1.2.0 - 2026-08-29
 
 - Added a Display tab alongside Network and Notifications with software
